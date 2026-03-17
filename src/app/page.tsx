@@ -144,9 +144,13 @@ export default function HomePage() {
     setSelectedProjectId(null);
   }, [listMode]);
 
-  const handleDeleteFromArchive = async (projectId: string) => {
+  const handleDeleteProject = async (projectId: string) => {
     if (deletingId) return;
-    if (!confirm("이 행사를 보관함에서 삭제할까요? 삭제 후 복구할 수 없습니다.")) return;
+    const message =
+      listMode === "archive"
+        ? "이 행사를 보관함에서 삭제할까요? 삭제 후 복구할 수 없습니다."
+        : "이 기관(행사)을 삭제할까요? 삭제 후 복구할 수 없습니다.";
+    if (!confirm(message)) return;
     setDeletingId(projectId);
     try {
       if (isDevMode()) {
@@ -398,7 +402,7 @@ export default function HomePage() {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleDeleteFromArchive(p.id);
+                                handleDeleteProject(p.id);
                               }}
                               disabled={deletingId === p.id}
                               className="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
@@ -422,6 +426,18 @@ export default function HomePage() {
                               <Calculator className="h-4 w-4" />
                               정산
                             </Link>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteProject(p.id);
+                              }}
+                              disabled={deletingId === p.id}
+                              className="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              {deletingId === p.id ? "삭제 중..." : "삭제"}
+                            </button>
                           </>
                         )}
                       </div>
@@ -503,7 +519,7 @@ export default function HomePage() {
                         </Link>
                         <button
                           type="button"
-                          onClick={() => handleDeleteFromArchive(selectedProject.id)}
+                          onClick={() => handleDeleteProject(selectedProject.id)}
                           disabled={deletingId === selectedProject.id}
                           className="btn inline-flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
                         >
@@ -570,7 +586,7 @@ export default function HomePage() {
                             </Link>
                             <button
                               type="button"
-                              onClick={() => handleDeleteFromArchive(p.id)}
+                              onClick={() => handleDeleteProject(p.id)}
                               disabled={deletingId === p.id}
                               className="inline-flex items-center gap-1.5 text-red-600 hover:underline disabled:opacity-50"
                             >
@@ -596,6 +612,15 @@ export default function HomePage() {
                               <Calculator className="h-3.5 w-3.5" />
                               정산
                             </Link>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteProject(p.id)}
+                              disabled={deletingId === p.id}
+                              className="inline-flex items-center gap-1.5 text-red-600 hover:underline disabled:opacity-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              삭제
+                            </button>
                           </>
                         )}
                       </div>

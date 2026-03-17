@@ -129,8 +129,16 @@ export function ParkingSection({ projectId, date, project }: Props) {
         saveRow({ ...row!, vehicle_num: v }, index);
         ticketRefs.current[index]?.[0]?.focus();
       }
-    }
-    if (e.key === "Tab" && !e.shiftKey) {
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (index > 0) vehicleRefs.current[index - 1]?.focus();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (index < rows.length - 1) vehicleRefs.current[index + 1]?.focus();
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      ticketRefs.current[index]?.[0]?.focus();
+    } else if (e.key === "Tab" && !e.shiftKey) {
       e.preventDefault();
       ticketRefs.current[index]?.[0]?.focus();
     }
@@ -148,15 +156,22 @@ export function ParkingSection({ projectId, date, project }: Props) {
       const key = TICKET_KEYS[colIndex];
       updateRow(rowIndex, key, Math.max(0, (row[key] || 0) - 1));
     } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
       if (colIndex > 0) {
-        e.preventDefault();
         ticketRefs.current[rowIndex]?.[colIndex - 1]?.focus();
+      } else {
+        vehicleRefs.current[rowIndex]?.focus();
       }
     } else if (e.key === "ArrowRight") {
+      e.preventDefault();
       if (colIndex < TICKET_KEYS.length - 1) {
-        e.preventDefault();
         ticketRefs.current[rowIndex]?.[colIndex + 1]?.focus();
       }
+    } else if (e.key === "Tab" && !e.shiftKey && rowIndex === rows.length - 1 && colIndex === TICKET_KEYS.length - 1) {
+      e.preventDefault();
+      const nextIndex = rows.length;
+      addRow();
+      setTimeout(() => vehicleRefs.current[nextIndex]?.focus(), 0);
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (colIndex < TICKET_KEYS.length - 1) {

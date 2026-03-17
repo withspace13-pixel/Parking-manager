@@ -1,6 +1,8 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+// URL에 https:// 가 두 번 들어가는 경우 정리 (예: .env에 https:// 를 두 번 넣은 경우)
+const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseUrl = rawUrl.replace(/^(https?:\/\/)+/, "https://").replace(/\/+$/, "") || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
 export const supabase: SupabaseClient = createClient(

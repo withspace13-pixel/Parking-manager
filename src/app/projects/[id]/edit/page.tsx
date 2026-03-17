@@ -113,7 +113,13 @@ export default function EditProjectPage() {
       router.push("/");
       router.refresh();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "저장 중 오류가 발생했습니다.");
+      const msg =
+        err instanceof Error
+          ? err.message
+          : (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string")
+            ? String((err as { message: string }).message)
+            : "저장 중 오류가 발생했습니다.";
+      setError(msg);
     } finally {
       setSaving(false);
     }

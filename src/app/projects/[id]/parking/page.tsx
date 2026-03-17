@@ -242,8 +242,16 @@ export default function ParkingPage() {
         saveRow({ ...row!, vehicle_num: v }, index);
         ticketRefs.current[index]?.[0]?.focus();
       }
-    }
-    if (e.key === "Tab" && !e.shiftKey) {
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (index > 0) vehicleRefs.current[index - 1]?.focus();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (index < rows.length - 1) vehicleRefs.current[index + 1]?.focus();
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      ticketRefs.current[index]?.[0]?.focus();
+    } else if (e.key === "Tab" && !e.shiftKey) {
       e.preventDefault();
       ticketRefs.current[index]?.[0]?.focus();
     }
@@ -260,6 +268,23 @@ export default function ParkingPage() {
       const row = rows[rowIndex];
       const key = TICKET_KEYS[colIndex];
       updateRow(rowIndex, key, Math.max(0, (row[key] || 0) - 1));
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      if (colIndex > 0) {
+        ticketRefs.current[rowIndex]?.[colIndex - 1]?.focus();
+      } else {
+        vehicleRefs.current[rowIndex]?.focus();
+      }
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      if (colIndex < TICKET_KEYS.length - 1) {
+        ticketRefs.current[rowIndex]?.[colIndex + 1]?.focus();
+      }
+    } else if (e.key === "Tab" && !e.shiftKey && rowIndex === rows.length - 1 && colIndex === TICKET_KEYS.length - 1) {
+      e.preventDefault();
+      const nextIndex = rows.length;
+      addRow();
+      setTimeout(() => vehicleRefs.current[nextIndex]?.focus(), 0);
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (colIndex < TICKET_KEYS.length - 1) {
@@ -418,14 +443,22 @@ export default function ParkingPage() {
             </tbody>
           </table>
         </div>
-        <button
-          type="button"
-          onClick={addRow}
-          className="btn mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm"
-        >
-          <Plus className="h-4 w-4" />
-          행 추가
-        </button>
+        <div className="mt-4 flex items-center justify-between gap-4">
+          <button
+            type="button"
+            onClick={addRow}
+            className="btn inline-flex items-center gap-2 px-4 py-2 text-sm"
+          >
+            <Plus className="h-4 w-4" />
+            행 추가
+          </button>
+          <Link
+            href="/"
+            className="btn btn-primary inline-flex items-center gap-2 px-4 py-2 text-sm"
+          >
+            완료
+          </Link>
+        </div>
       </main>
     </div>
   );

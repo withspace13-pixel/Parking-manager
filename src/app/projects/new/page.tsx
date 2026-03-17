@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { ArrowLeft, Copy, Save } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeft, Copy, Home, Save } from "lucide-react";
 import { isDevMode, setForceDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
@@ -51,6 +51,12 @@ export default function NewProjectPage() {
   const [roomByDate, setRoomByDate] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  // Supabase URL 확인용 (연동 디버깅 후 제거 가능)
+  useEffect(() => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    console.log("[Supabase 연결] URL:", url || "(비어 있음)");
+  }, []);
 
   const dateList = (() => {
     const s = String(start_date ?? "").trim();
@@ -143,7 +149,12 @@ export default function NewProjectPage() {
 
       window.location.href = "/";
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err) || "저장 중 오류가 발생했습니다.";
+      const message =
+        err instanceof Error
+          ? err.message
+          : (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string")
+            ? String((err as { message: string }).message)
+            : String(err) || "저장 중 오류가 발생했습니다.";
       setError(
         message.includes("Supabase") || message.includes("fetch") || message.includes("network")
           ? `${message} Supabase가 연결되지 않았을 수 있습니다. 테스트하려면 .env.local에 NEXT_PUBLIC_SUPABASE_URL을 비우거나 'placeholder'로 두면 개발자 모드(로컬 저장)로 동작합니다.`
@@ -158,14 +169,15 @@ export default function NewProjectPage() {
     <div className="min-h-screen bg-[var(--bg)]">
       <header className="border-b border-[var(--border)] bg-white">
         <div className="mx-auto max-w-6xl px-6 py-5">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Link
+              href="/"
+              className="inline-flex items-center justify-center rounded-full border border-[var(--border)] bg-white p-2 text-[var(--text-muted)] shadow-sm hover:bg-[var(--bg)] hover:text-[var(--text)]"
+              aria-label="홈으로"
+            >
+              <Home className="h-4 w-4" />
+            </Link>
             <h1 className="text-xl font-semibold text-[var(--text)]">기관 등록</h1>
-            <nav className="flex items-center gap-2">
-              <Link href="/" className="btn inline-flex items-center gap-2 px-3 py-2 text-sm">
-                <ArrowLeft className="h-4 w-4" />
-                대시보드
-              </Link>
-            </nav>
           </div>
         </div>
       </header>
