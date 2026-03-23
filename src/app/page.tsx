@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   PlusCircle,
   Calendar,
@@ -14,6 +14,7 @@ import {
   Archive,
   Trash2,
   FileText,
+  ChevronDown,
 } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
@@ -27,6 +28,22 @@ function todayString() {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 
+function shortYmd(d: string) {
+  return d.length >= 10 ? d.slice(2) : d;
+}
+
+function monthDay(d: string) {
+  if (d.length < 10) return d;
+  const [, m, day] = d.split("-");
+  return `${Number(m)}/${Number(day)}`;
+}
+
+function koreanDateTitle(d: string) {
+  if (d.length < 10) return d;
+  const [y, m, day] = d.split("-");
+  return `${Number(y.slice(2))}년 ${Number(m)}월 ${Number(day)}일`;
+}
+
 type ProjectWithRoom = Project & { roomName: string };
 
 export default function HomePage() {
@@ -35,11 +52,13 @@ export default function HomePage() {
   const [supportFilter, setSupportFilter] = useState<"all" | "onlySupport" | "onlyNoSupport">("all");
   const [selectedDate, setSelectedDate] = useState(today);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
   const [roomByProjectId, setRoomByProjectId] = useState<Record<string, string>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const devStore = useDevStore();
+  const projectPickerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (isDevMode()) {
@@ -67,38 +86,22 @@ export default function HomePage() {
   );
   const sourceProjects = listMode === "active" ? activeProjects : archivedProjects;
 
-  const projectsForDate = useMemo(() => {
-    const d = new Date(selectedDate).getTime();
-    return sourceProjects.filter((p) => {
-      const s = new Date(p.start_date).getTime();
-      const e = new Date(p.end_date).getTime();
-      return d >= s && d <= e;
-    });
-  }, [sourceProjects, selectedDate]);
-
-  const projectsForDateWithFilter = useMemo(() => {
-    if (supportFilter === "all") return projectsForDate;
-    return projectsForDate.filter((p) =>
-      supportFilter === "onlySupport" ? p.parking_support : !p.parking_support
-    );
-  }, [projectsForDate, supportFilter]);
-
   useEffect(() => {
-    if (projectsForDate.length === 0) {
+    if (sourceProjects.length === 0) {
       setRoomByProjectId({});
       return;
     }
     if (isDevMode()) {
       const map: Record<string, string> = {};
-      projectsForDate.forEach((p) => {
+      sourceProjects.forEach((p) => {
         const rooms = devStore.getRooms(p.id);
         const r = rooms.find((x) => x.date === selectedDate);
-        map[p.id] = r?.room_name ?? "미지정";
+        if (r) map[p.id] = r.room_name ?? "미지정";
       });
       setRoomByProjectId(map);
       return;
     }
-    const ids = projectsForDate.map((p) => p.id);
+    const ids = sourceProjects.map((p) => p.id);
     supabase
       .from("project_rooms")
       .select("project_id, room_name")
@@ -106,12 +109,26 @@ export default function HomePage() {
       .in("project_id", ids)
       .then(({ data }) => {
         const map: Record<string, string> = {};
-        projectsForDate.forEach((p) => {
-          map[p.id] = (data || []).find((x: { project_id: string }) => x.project_id === p.id)?.room_name ?? "미지정";
+        (data || []).forEach((x: { project_id: string; room_name: string | null }) => {
+          map[x.project_id] = x.room_name ?? "미지정";
         });
         setRoomByProjectId(map);
       });
-  }, [projectsForDate, selectedDate, devStore.data]);
+  }, [sourceProjects, selectedDate, devStore.data]);
+
+  const projectsForDate = useMemo(() => {
+    // 해당 일자에 project_rooms가 존재하는 행사만 표시 (띄엄띄엄 일정 지원)
+    if (!selectedDate) return [];
+    if (Object.keys(roomByProjectId).length === 0) return [];
+    return sourceProjects.filter((p) => roomByProjectId[p.id] !== undefined);
+  }, [sourceProjects, roomByProjectId, selectedDate]);
+
+  const projectsForDateWithFilter = useMemo(() => {
+    if (supportFilter === "all") return projectsForDate;
+    return projectsForDate.filter((p) =>
+      supportFilter === "onlySupport" ? p.parking_support : !p.parking_support
+    );
+  }, [projectsForDate, supportFilter]);
 
   const projectsWithRoom: ProjectWithRoom[] = useMemo(
     () =>
@@ -121,6 +138,23 @@ export default function HomePage() {
       })),
     [projectsForDateWithFilter, roomByProjectId]
   );
+
+  const selectedProjectForPicker = useMemo(() => {
+    const list = projectsForDateWithFilter;
+    if (!selectedProjectId) return null;
+    return list.find((p) => p.id === selectedProjectId) ?? null;
+  }, [projectsForDateWithFilter, selectedProjectId]);
+
+  useEffect(() => {
+    if (!projectPickerOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const el = projectPickerRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && !el.contains(e.target)) setProjectPickerOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [projectPickerOpen]);
 
   const selectedProject = selectedProjectId
     ? allProjects.find((p) => p.id === selectedProjectId) ?? null
@@ -231,7 +265,7 @@ export default function HomePage() {
           </Link>
         </div>
 
-        <div className="glass mb-8 p-5">
+        <div className="card mb-8 p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               {selectedProject && (
@@ -303,24 +337,64 @@ export default function HomePage() {
               <label className="text-sm font-medium text-[var(--text)] whitespace-nowrap">
                 행사 선택
               </label>
-              {(() => {
-                const filteredList = projectsForDateWithFilter;
-                return (
-              <select
-                value={selectedProjectId ?? ""}
-                onChange={(e) => setSelectedProjectId(e.target.value || null)}
-                className="input flex-1 px-3 py-2.5 text-sm text-[var(--text)]"
-              >
-                <option value="">선택하세요</option>
-                {filteredList.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    기관: {p.org_name} ({p.manager}){" "}
-                    {`| 사용 공간: ${roomByProjectId[p.id] ?? "미지정"}`}
-                  </option>
-                ))}
-              </select>
-                );
-              })()}
+              <div className="relative flex-1" ref={projectPickerRef}>
+                <button
+                  type="button"
+                  onClick={() => setProjectPickerOpen((v) => !v)}
+                  className="input flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-sm text-[var(--text)]"
+                  aria-haspopup="listbox"
+                  aria-expanded={projectPickerOpen}
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {selectedProjectForPicker
+                      ? `${selectedProjectForPicker.org_name} (${selectedProjectForPicker.manager}) | ${roomByProjectId[selectedProjectForPicker.id] ?? "미지정"}`
+                      : "선택하세요"}
+                  </span>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-[var(--text-muted)]" />
+                </button>
+
+                {projectPickerOpen && (
+                  <div
+                    role="listbox"
+                    className="absolute z-50 mt-2 w-full overflow-hidden rounded-xl border border-[var(--border)] bg-white shadow-lg"
+                  >
+                    <div className="max-h-72 overflow-auto py-1">
+                      {projectsForDateWithFilter.length === 0 ? (
+                        <div className="px-3 py-2 text-sm text-[var(--text-muted)]">선택 가능한 행사가 없습니다.</div>
+                      ) : (
+                        projectsForDateWithFilter.map((p) => {
+                          const room = roomByProjectId[p.id] ?? "미지정";
+                          const active = selectedProjectId === p.id;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              role="option"
+                              aria-selected={active}
+                              onClick={() => {
+                                setSelectedProjectId(p.id);
+                                setProjectPickerOpen(false);
+                              }}
+                              className={`w-full px-3 py-2 text-left text-sm transition-colors ${
+                                active ? "bg-[#EFF6FF]" : "hover:bg-[#F8FAFC]"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="min-w-0 flex-1 truncate text-[var(--text)]">
+                                  {p.org_name} ({p.manager})
+                                </span>
+                                <span className="shrink-0 rounded-full bg-[#EEF2FF] px-2 py-0.5 text-xs font-semibold text-[#1D4ED8]">
+                                  {room}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -347,8 +421,8 @@ export default function HomePage() {
                 <div className="border-b border-[var(--border)] bg-[#F8FAFC] px-6 py-3">
                   <h3 className="text-sm font-semibold text-[var(--text)]">
                     {listMode === "archive"
-                      ? `보관함 · 선택 일자: ${selectedDate} — 해당 일자 종료 행사 목록`
-                      : `선택 일자: ${selectedDate} — 해당 일자 행사 목록`}
+                      ? `보관함 · ${koreanDateTitle(selectedDate)} 종료 행사 목록`
+                      : `${koreanDateTitle(selectedDate)} 행사 목록`}
                   </h3>
                 </div>
                 <ul className="divide-y divide-[var(--border)]">
@@ -378,7 +452,10 @@ export default function HomePage() {
                         </div>
                         <div className="flex shrink-0 flex-wrap items-center gap-4 text-sm">
                           <span className="text-[var(--text-muted)]">
-                            <span className="font-medium text-[var(--text)]">일자</span> {selectedDate}
+                            <span className="font-medium text-[var(--text)]">기간</span>{" "}
+                            {p.start_date === p.end_date
+                              ? monthDay(p.start_date)
+                              : `${monthDay(p.start_date)} ~ ${monthDay(p.end_date)}`}
                           </span>
                           <span className="text-[var(--text-muted)]">
                             <span className="font-medium text-[var(--text)]">사용 공간</span> {p.roomName}
@@ -459,25 +536,29 @@ export default function HomePage() {
               <div className="card card-hover p-6">
                 <p className="mb-3 text-sm font-medium text-[var(--text-muted)]">선택한 행사 상세</p>
                 <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div className="space-y-2 rounded-lg bg-[#F9FAFF] px-4 py-3">
-                    <p className="text-base font-semibold text-[var(--text)]">
-                      {selectedProject.org_name}{" "}
-                      <span className="text-sm font-normal text-[var(--text-muted)]">
-                        / {selectedProject.manager}
+                  <div className="space-y-3 rounded-lg bg-[#F9FAFF] px-5 py-4 min-w-0 flex-1">
+                    <p className="text-xl font-semibold text-[var(--text)]">
+                      {selectedProject.org_name}
+                      <span className="text-lg font-normal text-[var(--text-muted)]">
+                        {" "}/ {selectedProject.manager}
                       </span>
                     </p>
-                    <div className="flex flex-wrap gap-6 text-sm items-center">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
                       <Badge variant={selectedProject.parking_support ? "success" : "destructive"}>
                         주차지원 {selectedProject.parking_support ? "O" : "X"}
                       </Badge>
-                      {selectedProject.remarks && (
-                        <p className="font-semibold text-[var(--text)]">
-                          {selectedProject.remarks}
-                        </p>
-                      )}
+                      <span className="text-[var(--text)]">
+                        비고 {selectedProject.remarks ? selectedProject.remarks : "없음"}
+                      </span>
                     </div>
-                    <p className="text-sm font-semibold text-[var(--text)]">
+                    <p className="text-base font-semibold text-[var(--text)]">
                       사용 공간 {roomByProjectId[selectedProject.id] ?? "미지정"}
+                    </p>
+                    <p className="text-sm text-[var(--text-muted)]">
+                      행사 기간{" "}
+                      {selectedProject.start_date === selectedProject.end_date
+                        ? shortYmd(selectedProject.start_date)
+                        : `${shortYmd(selectedProject.start_date)} ~ ${shortYmd(selectedProject.end_date)}`}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -545,9 +626,10 @@ export default function HomePage() {
           </>
         )}
 
+        {listMode === "archive" && (
         <details className="mt-10">
           <summary className="cursor-pointer text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text)]">
-            {listMode === "archive" ? "보관함 전체 목록 (삭제 등)" : "전체 기관 목록 (수정 · 룸 설정 등)"}
+            보관함 전체 목록 (삭제 등)
           </summary>
           <div className="card card-hover mt-4 overflow-hidden">
             <table className="w-full text-left text-sm">
@@ -566,7 +648,7 @@ export default function HomePage() {
                   <tr key={p.id} className="table-row-hover transition-colors">
                     <td className="px-6 py-4 font-medium text-[var(--text)]">{p.org_name}</td>
                     <td className="px-6 py-4 text-[var(--text-muted)]">{p.manager}</td>
-                    <td className="px-6 py-4 text-[var(--text-muted)]">{p.start_date} ~ {p.end_date}</td>
+                    <td className="px-6 py-4 text-[var(--text-muted)]">{p.start_date === p.end_date ? p.start_date : `${p.start_date} ~ ${p.end_date}`}</td>
                     <td className="px-6 py-4">
                       <Badge variant={p.parking_support ? "success" : "destructive"}>
                         {p.parking_support ? "O" : "X"}
@@ -575,54 +657,24 @@ export default function HomePage() {
                     <td className="max-w-[140px] truncate px-6 py-4 text-[var(--text-muted)]">{p.remarks || "—"}</td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
-                        {listMode === "archive" ? (
-                          <div className="flex items-center gap-3">
-                            <Link
-                              href={`/projects/${p.id}/report`}
-                              className="inline-flex items-center gap-1.5 text-[var(--primary)] hover:underline"
-                            >
-                              <FileText className="h-3.5 w-3.5" />
-                              보고서
-                            </Link>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteProject(p.id)}
-                              disabled={deletingId === p.id}
-                              className="inline-flex items-center gap-1.5 text-red-600 hover:underline disabled:opacity-50"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              보관함에서 삭제
-                            </button>
-                          </div>
-                        ) : (
-                          <>
-                            <Link
-                              href={`/projects/${p.id}/edit`}
-                              className="inline-flex items-center gap-1.5 text-[var(--primary)] hover:underline"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                              수정
-                            </Link>
-                            <Link href={`/projects/${p.id}/rooms`} className="inline-flex items-center gap-1.5 text-[var(--text-muted)] hover:text-[var(--text)]">룸 설정</Link>
-                            <Link href={`/projects/${p.id}/parking`} className="inline-flex items-center gap-1.5 text-[var(--text-muted)] hover:text-[var(--text)]">주차권</Link>
-                            <Link
-                              href={`/projects/${p.id}/settlement`}
-                              className="inline-flex items-center gap-1.5 text-[var(--text-muted)] hover:text-[var(--text)]"
-                            >
-                              <Calculator className="h-3.5 w-3.5" />
-                              정산
-                            </Link>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteProject(p.id)}
-                              disabled={deletingId === p.id}
-                              className="inline-flex items-center gap-1.5 text-red-600 hover:underline disabled:opacity-50"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              삭제
-                            </button>
-                          </>
-                        )}
+                        <div className="flex items-center gap-3">
+                          <Link
+                            href={`/projects/${p.id}/report`}
+                            className="inline-flex items-center gap-1.5 text-[var(--primary)] hover:underline"
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                            보고서
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteProject(p.id)}
+                            disabled={deletingId === p.id}
+                            className="inline-flex items-center gap-1.5 text-red-600 hover:underline disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            보관함에서 삭제
+                          </button>
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -631,6 +683,7 @@ export default function HomePage() {
             </table>
           </div>
         </details>
+        )}
       </main>
     </div>
   );

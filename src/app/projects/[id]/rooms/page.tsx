@@ -162,11 +162,11 @@ export default function ProjectRoomsPage() {
           <div>
             <h2 className="text-lg font-semibold text-[var(--text)]">{project.org_name}</h2>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
-              {project.manager} · {project.start_date} ~ {project.end_date}
+              {project.manager} · {project.start_date === project.end_date ? project.start_date : `${project.start_date} ~ ${project.end_date}`}
             </p>
           </div>
           <div className="flex gap-2">
-            <button type="button" onClick={applyRoomsToAll} className="btn inline-flex items-center gap-2 px-4 py-2 text-sm">
+            <button type="button" onClick={applyRoomsToAll} className="btn btn-relief inline-flex items-center gap-2 px-4 py-2 text-sm rounded-xl">
               <Copy className="h-4 w-4" />
               룸 일괄 적용
             </button>

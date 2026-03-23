@@ -192,7 +192,7 @@ export default function ProjectReportPage() {
       <main className="mx-auto max-w-5xl px-6 py-8">
         <div className="mb-6">
           <h2 className="text-lg font-semibold text-[var(--text)]">{project.org_name}</h2>
-          <p className="text-sm text-[var(--text-muted)]">{project.manager} · {project.start_date} ~ {project.end_date}</p>
+          <p className="text-sm text-[var(--text-muted)]">{project.manager} · {project.start_date === project.end_date ? project.start_date : `${project.start_date} ~ ${project.end_date}`}</p>
         </div>
 
         <div className="card overflow-hidden p-0">
@@ -235,15 +235,19 @@ export default function ProjectReportPage() {
           </div>
 
           {rows.length > 0 && (
-            <div className="border-t-2 border-[var(--border)] bg-[#F1F5F9] px-4 py-3">
-              <p className="font-semibold text-[var(--text)]">
-                합계 권종 · 금액
-              </p>
-              <p className="mt-1 text-sm text-[var(--text-muted)]">
-                종일 {totals.all_day_cnt}매 · 2h {totals["2h_cnt"]}매 · 1h {totals["1h_cnt"]}매 · 30m {totals["30m_cnt"]}매
-                {" · "}
-                <span className="font-semibold text-[var(--text)]">정산 합계 {totals.amount.toLocaleString()}원</span>
-              </p>
+            <div className="flex flex-wrap items-center justify-between gap-4 border-t-2 border-[var(--border)] bg-[#F1F5F9] px-4 py-4">
+              <div>
+                <p className="text-xs font-medium text-[var(--text-muted)]">합계 권종</p>
+                <p className="mt-0.5 text-sm text-[var(--text)]">
+                  종일 {totals.all_day_cnt}매 · 2h {totals["2h_cnt"]}매 · 1h {totals["1h_cnt"]}매 · 30m {totals["30m_cnt"]}매
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-medium text-[var(--text-muted)]">금액</p>
+                <p className="mt-0.5 text-xl font-bold text-[var(--text)]">
+                  정산 합계 {totals.amount.toLocaleString()}원
+                </p>
+              </div>
             </div>
           )}
         </div>

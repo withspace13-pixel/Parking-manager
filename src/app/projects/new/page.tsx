@@ -39,13 +39,24 @@ function todayString() {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 
+function formatMdDow(ymd: string) {
+  const [y, m, d] = String(ymd).slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return ymd;
+  const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(y, m - 1, d).getDay()];
+  return `${m}/${d}(${dow})`;
+}
+
 export default function NewProjectPage() {
   const router = useRouter();
   const devStore = useDevStore();
+  type ScheduleRange = { start: string; end: string };
   const [org_name, setOrgName] = useState("");
   const [manager, setManager] = useState("");
-  const [start_date, setStartDate] = useState(todayString());
-  const [end_date, setEndDate] = useState(todayString());
+  const [ranges, setRanges] = useState<ScheduleRange[]>(() => {
+    const t = todayString();
+    return [{ start: t, end: t }];
+  });
+  const [includeWeekends, setIncludeWeekends] = useState(false);
   const [parking_support, setParkingSupport] = useState(false);
   const [remarks, setRemarks] = useState("");
   const [roomByDate, setRoomByDate] = useState<Record<string, string>>({});
@@ -58,12 +69,65 @@ export default function NewProjectPage() {
     console.log("[Supabase 연결] URL:", url || "(비어 있음)");
   }, []);
 
-  const dateList = (() => {
-    const s = String(start_date ?? "").trim();
-    const e = String(end_date ?? "").trim();
-    if (!s || !e) return [];
-    return getDateRange(s, e);
+  const normalizedRanges = (() => {
+    return ranges
+      .map((r) => ({ start: String(r.start ?? "").trim().slice(0, 10), end: String(r.end ?? "").trim().slice(0, 10) }))
+      .filter((r) => isDateStr(r.start) && isDateStr(r.end) && r.start <= r.end);
   })();
+
+  const dateList = (() => {
+    const set = new Set<string>();
+    normalizedRanges.forEach((r) => {
+      getDateRange(r.start, r.end).forEach((d) => set.add(d));
+    });
+    const all = Array.from(set).sort();
+    if (includeWeekends) return all;
+    return all.filter((ymd) => {
+      const [y, m, d] = ymd.split("-").map(Number);
+      const day = new Date(y, m - 1, d).getDay();
+      return day !== 0 && day !== 6;
+    });
+  })();
+
+  const rangesLabel = (() => {
+    // 실제 생성된 날짜(dateList)를 연속 구간으로 묶어 표시 (주말 제외/띄엄띄엄 일정 반영)
+    if (dateList.length === 0) return "";
+    const ranges: Array<{ start: string; end: string }> = [];
+    const toTime = (ymd: string) => {
+      const [y, m, d] = ymd.split("-").map(Number);
+      return new Date(y, m - 1, d).getTime();
+    };
+    let curStart = dateList[0];
+    let prev = dateList[0];
+    for (let i = 1; i < dateList.length; i++) {
+      const next = dateList[i];
+      const isConsecutive = toTime(next) - toTime(prev) === 24 * 60 * 60 * 1000;
+      if (!isConsecutive) {
+        ranges.push({ start: curStart, end: prev });
+        curStart = next;
+      }
+      prev = next;
+    }
+    ranges.push({ start: curStart, end: prev });
+    return ranges
+      .map((r) => (r.start === r.end ? formatMdDow(r.start) : `${formatMdDow(r.start)} ~ ${formatMdDow(r.end)}`))
+      .join(", ");
+  })();
+
+  const addRange = () => {
+    const t = todayString();
+    setRanges((prev) => [...prev, { start: t, end: t }]);
+    setError("");
+  };
+
+  const removeRange = (idx: number) => {
+    setRanges((prev) => prev.filter((_, i) => i !== idx));
+    setError("");
+  };
+
+  const updateRange = (idx: number, key: "start" | "end", value: string) => {
+    setRanges((prev) => prev.map((r, i) => (i === idx ? { ...r, [key]: value.slice(0, 10) } : r)));
+  };
 
   const applyRoomsToAll = () => {
     const firstRoom = roomByDate[dateList[0]] ?? "";
@@ -86,14 +150,18 @@ export default function NewProjectPage() {
     setError("");
     const name = String(org_name ?? "").trim();
     const mgr = String(manager ?? "").trim();
-    const sDate = String(start_date ?? "").trim();
-    const eDate = String(end_date ?? "").trim();
-    if (!name || !mgr || !sDate || !eDate) {
-      setError("기관명, 담당자, 시작일, 종료일을 모두 입력해 주세요.");
+    if (!name || !mgr) {
+      setError("기관명과 담당자명을 입력해 주세요.");
       return;
     }
-    if (new Date(sDate) > new Date(eDate)) {
-      setError("시작일이 종료일보다 늦을 수 없습니다.");
+    if (normalizedRanges.length === 0) {
+      setError("사용 일자(시작/종료)를 올바르게 입력해 주세요.");
+      return;
+    }
+    const sDate = normalizedRanges.map((r) => r.start).sort()[0];
+    const eDate = normalizedRanges.map((r) => r.end).sort().slice(-1)[0];
+    if (!sDate || !eDate) {
+      setError("사용 일자(시작/종료)를 올바르게 입력해 주세요.");
       return;
     }
     setSaving(true);
@@ -235,29 +303,101 @@ export default function NewProjectPage() {
                   placeholder="예: 홍길동"
                 />
               </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text)]">사용 일자 (시작) *</label>
-                <input
-                  type="date"
-                  value={start_date}
-                  onChange={(e) => setStartDate((e.target.value || "").slice(0, 10))}
-                  onBlur={(e) => setStartDate((prev) => (e.target.value ? e.target.value.slice(0, 10) : prev))}
-                  className="input w-full px-3 py-2.5 text-[var(--text)]"
-                />
+              <div className="sm:col-span-2">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="w-full sm:w-[260px]">
+                    <label className="mb-2 block text-sm font-medium text-[var(--text)]">사용 일자 (시작) *</label>
+                    <input
+                      type="date"
+                      value={ranges[0]?.start ?? ""}
+                      onChange={(e) => updateRange(0, "start", e.target.value || "")}
+                      onBlur={(e) => updateRange(0, "start", e.target.value || (ranges[0]?.start ?? ""))}
+                      className="input w-full px-3 py-2.5 text-[var(--text)]"
+                    />
+                  </div>
+                  <div className="w-full sm:w-[260px]">
+                    <label className="mb-2 block text-sm font-medium text-[var(--text)]">사용 일자 (종료) *</label>
+                    <input
+                      type="date"
+                      value={ranges[0]?.end ?? ""}
+                      onChange={(e) => updateRange(0, "end", e.target.value || "")}
+                      onBlur={(e) => updateRange(0, "end", e.target.value || (ranges[0]?.end ?? ""))}
+                      className="input w-full px-3 py-2.5 text-[var(--text)]"
+                    />
+                  </div>
+                  <div className="hidden sm:block flex-1" />
+                  <button
+                    type="button"
+                    onClick={addRange}
+                    className="btn w-full sm:w-auto inline-flex items-center justify-center rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
+                  >
+                    일정 추가
+                  </button>
+                </div>
               </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text)]">사용 일자 (종료) *</label>
-                <input
-                  type="date"
-                  value={end_date}
-                  onChange={(e) => setEndDate((e.target.value || "").slice(0, 10))}
-                  onBlur={(e) => setEndDate((prev) => (e.target.value ? e.target.value.slice(0, 10) : prev))}
-                  className="input w-full px-3 py-2.5 text-[var(--text)]"
-                />
-              </div>
-              {start_date && end_date && (
-                <div className="sm:col-span-2 text-xs text-[var(--text-muted)]">
-                  선택된 기간: {start_date} ~ {end_date} → 날짜별 룸 {dateList.length}일
+
+              {ranges.length > 1 && (
+                <div className="sm:col-span-2 space-y-3">
+                  {ranges.slice(1).map((r, offset) => {
+                    const idx = offset + 1;
+                    return (
+                      <div key={`range-${idx}`} className="flex flex-wrap items-end gap-3">
+                        <div className="w-full sm:w-[260px]">
+                          <label className="mb-2 block text-sm font-medium text-[var(--text)]">
+                            사용 일자 (시작) * <span className="text-[var(--text-muted)]">(추가 일정 {idx})</span>
+                          </label>
+                          <input
+                            type="date"
+                            value={r.start ?? ""}
+                            onChange={(e) => updateRange(idx, "start", e.target.value || "")}
+                            className="input w-full px-3 py-2.5 text-[var(--text)]"
+                          />
+                        </div>
+                        <div className="w-full sm:w-[260px]">
+                          <label className="mb-2 block text-sm font-medium text-[var(--text)]">
+                            사용 일자 (종료) * <span className="text-[var(--text-muted)]">(추가 일정 {idx})</span>
+                          </label>
+                          <input
+                            type="date"
+                            value={r.end ?? ""}
+                            onChange={(e) => updateRange(idx, "end", e.target.value || "")}
+                            className="input w-full px-3 py-2.5 text-[var(--text)]"
+                          />
+                        </div>
+                        <div className="hidden sm:block flex-1" />
+                        <button
+                          type="button"
+                          onClick={() => removeRange(idx)}
+                          className="w-full sm:w-auto text-xs font-semibold text-red-600 hover:underline"
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {rangesLabel && (
+                <div className="sm:col-span-2 mt-1 rounded-xl border border-[var(--border)] bg-[#F8FAFC] px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-[var(--text)]">선택된 기간</span>
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${
+                        includeWeekends
+                          ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                          : "border-slate-200 bg-slate-50 text-slate-700"
+                      }`}
+                    >
+                      {includeWeekends ? "주말 포함" : "주말 제외"}
+                    </span>
+                    <span className="ml-auto rounded-full bg-amber-50 px-2.5 py-1 text-sm font-bold text-amber-700">
+                      총 {dateList.length}일 사용
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm text-[var(--text-muted)] break-words">
+                    {rangesLabel}
+                  </p>
                 </div>
               )}
               <div className="sm:col-span-2">
@@ -289,23 +429,47 @@ export default function NewProjectPage() {
           {dateList.length > 0 && (
             <div className="card card-hover p-6">
               <div className="mb-4 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-[var(--text)]">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
                   날짜별 사용 룸 ({dateList.length}일)
+                  <span
+                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${
+                      includeWeekends
+                        ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                        : "border-slate-200 bg-slate-50 text-slate-700"
+                    }`}
+                  >
+                    {includeWeekends ? "주말 포함" : "주말 제외"}
+                  </span>
                 </h3>
-                <button
-                  type="button"
-                  onClick={applyRoomsToAll}
-                  className="btn inline-flex items-center gap-2 px-4 py-2 text-sm"
-                >
-                  <Copy className="h-4 w-4" />
-                  룸 일괄 적용
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIncludeWeekends((v) => !v);
+                      setError("");
+                    }}
+                    className={`btn inline-flex items-center gap-2 px-4 py-2 text-sm rounded-xl ${
+                      includeWeekends ? "btn-primary" : "btn-relief"
+                    }`}
+                    aria-pressed={includeWeekends}
+                  >
+                    주말 포함
+                  </button>
+                  <button
+                    type="button"
+                    onClick={applyRoomsToAll}
+                    className="btn btn-relief inline-flex items-center gap-2 px-4 py-2 text-sm rounded-xl"
+                  >
+                    <Copy className="h-4 w-4" />
+                    룸 일괄 적용
+                  </button>
+                </div>
               </div>
               <p className="mb-4 text-xs text-[var(--text-muted)]">최상단 날짜에 입력한 룸을 아래 모든 날짜에 동일 적용합니다.</p>
               <ul className="max-h-[320px] space-y-3 overflow-y-auto">
                 {dateList.map((date) => (
                   <li key={date} className="flex items-center gap-4">
-                    <span className="w-28 shrink-0 text-sm text-[var(--text-muted)]">{date}</span>
+                    <span className="w-28 shrink-0 text-sm text-[var(--text-muted)]">{formatMdDow(date)}</span>
                     <input
                       type="text"
                       value={roomByDate[date] ?? ""}

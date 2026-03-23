@@ -55,7 +55,11 @@ export default function ParkingPage() {
 
   useEffect(() => {
     if (!dateList.length) return;
-    if (!selectedDate) setSelectedDate(dateList[0]);
+    if (!selectedDate) {
+      const today = new Date().toISOString().slice(0, 10);
+      const defaultDate = dateList.includes(today) ? today : dateList[0];
+      setSelectedDate(defaultDate);
+    }
   }, [dateList, selectedDate]);
 
   useEffect(() => {
