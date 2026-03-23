@@ -8,7 +8,6 @@ import {
   Building2,
   Calculator,
   Pencil,
-  DoorOpen,
   User,
   Home,
   Archive,
@@ -20,6 +19,12 @@ import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
 import type { Project } from "@/lib/supabase";
+import {
+  periodLabelIsoFromSortedYmd,
+  periodLabelMonthDayFromSortedYmd,
+  periodLabelShortYmdFromSortedYmd,
+} from "@/lib/schedule-dates";
+import { isArchivedProjectExpiredForPurge } from "@/lib/archive-retention";
 import { ParkingSection } from "@/components/ParkingSection";
 import { Badge } from "@/components/ui/Badge";
 
@@ -56,9 +61,17 @@ export default function HomePage() {
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
   const [roomByProjectId, setRoomByProjectId] = useState<Record<string, string>>({});
+  /** project_rooms 실제 일자 기준 기간 문구 (띄엄·중간일 제외 반영) */
+  const [periodLabelById, setPeriodLabelById] = useState<
+    Record<string, { list: string; detail: string; full: string }>
+  >({});
+  /** 행사별 대표 일자(정렬된 project_rooms 날짜 중 첫날, 없으면 end_date) — 보관함 전체 목록 클릭 시 selectedDate 동기화용 */
+  const [primaryRoomDateByProjectId, setPrimaryRoomDateByProjectId] = useState<Record<string, string>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const devStore = useDevStore();
   const projectPickerRef = useRef<HTMLDivElement | null>(null);
+  /** roomByProjectId가 현재 selectedDate 기준으로 갱신되었을 때만 선택 해제(useEffect)를 적용 — 날짜 전환 직후 레이스 방지 */
+  const lastRoomFetchForDateRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (isDevMode()) {
@@ -89,9 +102,35 @@ export default function HomePage() {
   );
   const sourceProjects = listMode === "active" ? activeProjects : archivedProjects;
 
+  /** 보관함(행사 종료) 항목: 종료일 기준 30일 경과 시 자동 삭제 — 대시보드 방문 시 실행 */
+  useEffect(() => {
+    const expired = allProjects.filter((p) => isArchivedProjectExpiredForPurge(p.end_date, today));
+    if (expired.length === 0) return;
+
+    if (isDevMode()) {
+      expired.forEach((p) => devStore.deleteProject(p.id));
+      setAllProjects(devStore.getProjects());
+      setSelectedProjectId((prev) => (prev && expired.some((e) => e.id === prev) ? null : prev));
+      return;
+    }
+    if (loading) return;
+    const ids = expired.map((p) => p.id);
+    void (async () => {
+      const { error } = await supabase.from("projects").delete().in("id", ids);
+      if (error) {
+        console.error("[보관함 자동 삭제]", error);
+        return;
+      }
+      const { data } = await supabase.from("projects").select("*").order("start_date", { ascending: false });
+      setAllProjects(data || []);
+      setSelectedProjectId((prev) => (prev && ids.includes(prev) ? null : prev));
+    })();
+  }, [allProjects, today, loading, devStore.data]);
+
   useEffect(() => {
     if (sourceProjects.length === 0) {
       setRoomByProjectId({});
+      lastRoomFetchForDateRef.current = selectedDate;
       return;
     }
     if (isDevMode()) {
@@ -102,22 +141,114 @@ export default function HomePage() {
         if (r) map[p.id] = r.room_name ?? "미지정";
       });
       setRoomByProjectId(map);
+      lastRoomFetchForDateRef.current = selectedDate;
       return;
     }
     const ids = sourceProjects.map((p) => p.id);
-    supabase
-      .from("project_rooms")
-      .select("project_id, room_name")
-      .eq("date", selectedDate)
-      .in("project_id", ids)
-      .then(({ data }) => {
+    const dateForThisFetch = selectedDate;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("project_rooms")
+          .select("project_id, room_name")
+          .eq("date", dateForThisFetch)
+          .in("project_id", ids);
+        if (cancelled) return;
         const map: Record<string, string> = {};
-        (data || []).forEach((x: { project_id: string; room_name: string | null }) => {
-          map[x.project_id] = x.room_name ?? "미지정";
-        });
+        if (!error) {
+          (data || []).forEach((x: { project_id: string; room_name: string | null }) => {
+            map[x.project_id] = x.room_name ?? "미지정";
+          });
+        }
         setRoomByProjectId(map);
-      });
+        lastRoomFetchForDateRef.current = dateForThisFetch;
+      } catch {
+        if (cancelled) return;
+        setRoomByProjectId({});
+        lastRoomFetchForDateRef.current = dateForThisFetch;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [sourceProjects, selectedDate, devStore.data]);
+
+  useEffect(() => {
+    if (allProjects.length === 0) {
+      setPeriodLabelById({});
+      setPrimaryRoomDateByProjectId({});
+      return;
+    }
+    const fallback = (p: Project) => {
+      const list =
+        p.start_date === p.end_date
+          ? monthDay(p.start_date)
+          : `${monthDay(p.start_date)} ~ ${monthDay(p.end_date)}`;
+      const detail =
+        p.start_date === p.end_date
+          ? shortYmd(p.start_date)
+          : `${shortYmd(p.start_date)} ~ ${shortYmd(p.end_date)}`;
+      const full =
+        p.start_date === p.end_date
+          ? String(p.start_date).slice(0, 10)
+          : `${String(p.start_date).slice(0, 10)} ~ ${String(p.end_date).slice(0, 10)}`;
+      return { list, detail, full };
+    };
+    if (isDevMode()) {
+      const next: Record<string, { list: string; detail: string; full: string }> = {};
+      const primary: Record<string, string> = {};
+      allProjects.forEach((p) => {
+        const rooms = devStore.getRooms(p.id);
+        const dates = Array.from(new Set(rooms.map((r) => String(r.date).slice(0, 10)))).sort();
+        primary[p.id] = dates.length > 0 ? dates[0]! : String(p.end_date).slice(0, 10);
+        if (dates.length > 0) {
+          next[p.id] = {
+            list: periodLabelMonthDayFromSortedYmd(dates),
+            detail: periodLabelShortYmdFromSortedYmd(dates),
+            full: periodLabelIsoFromSortedYmd(dates),
+          };
+        } else {
+          next[p.id] = fallback(p);
+        }
+      });
+      setPeriodLabelById(next);
+      setPrimaryRoomDateByProjectId(primary);
+      return;
+    }
+    const ids = allProjects.map((p) => p.id);
+    void supabase
+      .from("project_rooms")
+      .select("project_id, date")
+      .in("project_id", ids)
+      .then(({ data, error }) => {
+        if (error) return;
+        const byProject: Record<string, Set<string>> = {};
+        (data || []).forEach((row: { project_id: string; date: string }) => {
+          const pid = row.project_id;
+          const d = String(row.date).slice(0, 10);
+          if (!byProject[pid]) byProject[pid] = new Set();
+          byProject[pid].add(d);
+        });
+        const next: Record<string, { list: string; detail: string; full: string }> = {};
+        const primary: Record<string, string> = {};
+        allProjects.forEach((p) => {
+          const dates = byProject[p.id] ? Array.from(byProject[p.id]).sort() : [];
+          primary[p.id] = dates.length > 0 ? dates[0]! : String(p.end_date).slice(0, 10);
+          if (dates.length > 0) {
+            next[p.id] = {
+              list: periodLabelMonthDayFromSortedYmd(dates),
+              detail: periodLabelShortYmdFromSortedYmd(dates),
+              full: periodLabelIsoFromSortedYmd(dates),
+            };
+          } else {
+            next[p.id] = fallback(p);
+          }
+        });
+        setPeriodLabelById(next);
+        setPrimaryRoomDateByProjectId(primary);
+      });
+  }, [allProjects, devStore.data]);
 
   const projectsForDate = useMemo(() => {
     // 해당 일자에 project_rooms가 존재하는 행사만 표시 (띄엄띄엄 일정 지원)
@@ -164,11 +295,13 @@ export default function HomePage() {
     : null;
 
   useEffect(() => {
-    if (selectedProjectId && !projectsForDateWithFilter.some((p) => p.id === selectedProjectId)) {
-      // 현재 선택이 필터 결과에 없으면 선택 해제만 하고, 기본 선택은 없음
+    if (!selectedProjectId) return;
+    // 날짜 변경 직후 roomByProjectId가 아직 이전 일자 기준이면 잘못 해제되지 않도록, fetch 완료 후에만 검사
+    if (lastRoomFetchForDateRef.current !== selectedDate) return;
+    if (!projectsForDateWithFilter.some((p) => p.id === selectedProjectId)) {
       setSelectedProjectId(null);
     }
-  }, [projectsForDateWithFilter, selectedProjectId]);
+  }, [projectsForDateWithFilter, selectedProjectId, selectedDate]);
 
   useEffect(() => {
     // 주차지원 필터 변경 시 현재 선택이 필터 결과에 없으면 선택만 해제
@@ -180,6 +313,13 @@ export default function HomePage() {
   useEffect(() => {
     setSelectedProjectId(null);
   }, [listMode]);
+
+  const handleSelectArchiveFullListRow = (p: Project) => {
+    const d = primaryRoomDateByProjectId[p.id] ?? String(p.end_date).slice(0, 10);
+    setSelectedDate(d);
+    setSelectedProjectId(p.id);
+    setProjectPickerOpen(false);
+  };
 
   const handleDeleteProject = async (projectId: string) => {
     if (deletingId) return;
@@ -456,9 +596,10 @@ export default function HomePage() {
                         <div className="flex shrink-0 flex-wrap items-center gap-4 text-sm">
                           <span className="text-[var(--text-muted)]">
                             <span className="font-medium text-[var(--text)]">기간</span>{" "}
-                            {p.start_date === p.end_date
-                              ? monthDay(p.start_date)
-                              : `${monthDay(p.start_date)} ~ ${monthDay(p.end_date)}`}
+                            {periodLabelById[p.id]?.list ??
+                              (p.start_date === p.end_date
+                                ? monthDay(p.start_date)
+                                : `${monthDay(p.start_date)} ~ ${monthDay(p.end_date)}`)}
                           </span>
                           <span className="text-[var(--text-muted)]">
                             <span className="font-medium text-[var(--text)]">사용 공간</span> {p.roomName}
@@ -547,9 +688,6 @@ export default function HomePage() {
                       </span>
                     </p>
                     <div className="flex flex-wrap items-center gap-2 text-sm">
-                      <Badge variant={selectedProject.parking_support ? "success" : "destructive"}>
-                        주차지원 {selectedProject.parking_support ? "O" : "X"}
-                      </Badge>
                       <span className="text-[var(--text)]">
                         비고 {selectedProject.remarks ? selectedProject.remarks : "없음"}
                       </span>
@@ -559,25 +697,23 @@ export default function HomePage() {
                     </p>
                     <p className="text-sm text-[var(--text-muted)]">
                       행사 기간{" "}
-                      {selectedProject.start_date === selectedProject.end_date
-                        ? shortYmd(selectedProject.start_date)
-                        : `${shortYmd(selectedProject.start_date)} ~ ${shortYmd(selectedProject.end_date)}`}
+                      {periodLabelById[selectedProject.id]?.detail ??
+                        (selectedProject.start_date === selectedProject.end_date
+                          ? shortYmd(selectedProject.start_date)
+                          : `${shortYmd(selectedProject.start_date)} ~ ${shortYmd(selectedProject.end_date)}`)}
                     </p>
                   </div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={selectedProject.parking_support ? "success" : "destructive"} className="shrink-0">
+                      주차지원 {selectedProject.parking_support ? "O" : "X"}
+                    </Badge>
                     <Link
                       href={`/projects/${selectedProject.id}/edit`}
                       className="btn inline-flex items-center gap-2 px-3 py-2 text-sm"
+                      title="기본 정보·일정·날짜별 룸을 함께 수정"
                     >
                       <Pencil className="h-4 w-4" />
                       수정
-                    </Link>
-                    <Link
-                      href={`/projects/${selectedProject.id}/rooms`}
-                      className="btn inline-flex items-center gap-2 px-3 py-2 text-sm"
-                    >
-                      <DoorOpen className="h-4 w-4" />
-                      룸 설정
                     </Link>
                     <Link
                       href={`/projects/${selectedProject.id}/parking`}
@@ -648,10 +784,28 @@ export default function HomePage() {
               </thead>
               <tbody>
                 {sourceProjects.map((p) => (
-                  <tr key={p.id} className="table-row-hover transition-colors">
+                  <tr
+                    key={p.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleSelectArchiveFullListRow(p)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleSelectArchiveFullListRow(p);
+                      }
+                    }}
+                    className={`table-row-hover cursor-pointer transition-colors ${
+                      selectedProjectId === p.id ? "bg-[#F0F4FF]" : ""
+                    }`}
+                    aria-label={`${p.org_name} 행사 선택 — 상세로 이동`}
+                  >
                     <td className="px-6 py-4 font-medium text-[var(--text)]">{p.org_name}</td>
                     <td className="px-6 py-4 text-[var(--text-muted)]">{p.manager}</td>
-                    <td className="px-6 py-4 text-[var(--text-muted)]">{p.start_date === p.end_date ? p.start_date : `${p.start_date} ~ ${p.end_date}`}</td>
+                    <td className="px-6 py-4 text-[var(--text-muted)]">
+                      {periodLabelById[p.id]?.full ??
+                        (p.start_date === p.end_date ? p.start_date : `${p.start_date} ~ ${p.end_date}`)}
+                    </td>
                     <td className="px-6 py-4">
                       <Badge variant={p.parking_support ? "success" : "destructive"}>
                         {p.parking_support ? "O" : "X"}
@@ -664,13 +818,17 @@ export default function HomePage() {
                           <Link
                             href={`/projects/${p.id}/report`}
                             className="inline-flex items-center gap-1.5 text-[var(--primary)] hover:underline"
+                            onClick={(e) => e.stopPropagation()}
                           >
                             <FileText className="h-3.5 w-3.5" />
                             보고서
                           </Link>
                           <button
                             type="button"
-                            onClick={() => handleDeleteProject(p.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteProject(p.id);
+                            }}
                             disabled={deletingId === p.id}
                             className="inline-flex items-center gap-1.5 text-red-600 hover:underline disabled:opacity-50"
                           >

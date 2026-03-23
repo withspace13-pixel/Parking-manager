@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Calculator, DoorOpen, Plus, Trash2 } from "lucide-react";
+import { Calculator, Pencil, Plus, Trash2 } from "lucide-react";
 import { useDevStore } from "@/lib/dev-store";
 import type { Project, ParkingRecord } from "@/lib/supabase";
 import { Badge } from "@/components/ui/Badge";
@@ -200,9 +200,9 @@ export function ParkingSection({ projectId, date, project }: Props) {
           </div>
         </div>
         <div className="flex gap-2">
-          <Link href={`/projects/${projectId}/rooms`} className="btn inline-flex items-center gap-2 px-3 py-2 text-sm">
-            <DoorOpen className="h-4 w-4" />
-            룸 설정
+          <Link href={`/projects/${projectId}/edit`} className="btn inline-flex items-center gap-2 px-3 py-2 text-sm" title="기본 정보·룸 함께 수정">
+            <Pencil className="h-4 w-4" />
+            수정
           </Link>
           <Link href={`/projects/${projectId}/settlement`} className="btn btn-primary inline-flex items-center gap-2 px-3 py-2 text-sm">
             <Calculator className="h-4 w-4" />

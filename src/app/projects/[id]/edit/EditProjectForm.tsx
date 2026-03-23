@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Copy, Home, Save, X } from "lucide-react";
-import { isDevMode, setForceDevMode } from "@/lib/dev-mode";
+import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
+import type { Project } from "@/lib/supabase";
 import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
 
 /** YYYY-MM-DD 형식인지 확인 */
@@ -35,11 +36,6 @@ function getDateRange(start: string, end: string): string[] {
   return dates;
 }
 
-function todayString() {
-  const d = new Date();
-  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-}
-
 function formatMdDow(ymd: string) {
   const [y, m, d] = String(ymd).slice(0, 10).split("-").map(Number);
   if (!y || !m || !d) return ymd;
@@ -47,31 +43,108 @@ function formatMdDow(ymd: string) {
   return `${m}/${d}(${dow})`;
 }
 
-export default function NewProjectPage() {
-  const router = useRouter();
+function isWeekendDate(ymd: string): boolean {
+  const [y, m, d] = String(ymd).slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return false;
+  const day = new Date(y, m - 1, d).getDay();
+  return day === 0 || day === 6;
+}
+
+type ScheduleRange = { start: string; end: string };
+
+export default function EditProjectForm() {
+  const params = useParams();
+  const rawId = params?.id;
+  const projectId = (Array.isArray(rawId) ? rawId[0] : rawId) ?? "";
   const devStore = useDevStore();
-  type ScheduleRange = { start: string; end: string };
+  const [project, setProject] = useState<Project | null>(null);
   const [org_name, setOrgName] = useState("");
   const [manager, setManager] = useState("");
-  const [ranges, setRanges] = useState<ScheduleRange[]>(() => {
-    const t = todayString();
-    return [{ start: t, end: t }];
-  });
+  const [ranges, setRanges] = useState<ScheduleRange[]>([{ start: "", end: "" }]);
   const [includeWeekends, setIncludeWeekends] = useState(false);
   const [parking_support, setParkingSupport] = useState(false);
   const [remarks, setRemarks] = useState("");
   const [roomByDate, setRoomByDate] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
 
-  // Supabase URL 확인용 (연동 디버깅 후 제거 가능)
   useEffect(() => {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    console.log("[Supabase 연결] URL:", url || "(비어 있음)");
-  }, []);
+    if (!projectId) {
+      setProject(null);
+      setLoading(false);
+      return;
+    }
+
+    function applyLoaded(
+      p: Project,
+      roomMap: Record<string, string>
+    ) {
+      setProject(p);
+      setOrgName(p.org_name);
+      setManager(p.manager);
+      // 저장된 날짜별 룸(project_rooms)이 있으면 그 날짜들로 일정 구간 복원 (중간 날 제거·띄엄일정 반영)
+      const roomDates = Object.keys(roomMap)
+        .map((d) => String(d).slice(0, 10))
+        .sort();
+      if (roomDates.length > 0) {
+        setRanges(datesYmdToConsecutiveRanges(roomDates));
+      } else {
+        setRanges([
+          {
+            start: String(p.start_date).slice(0, 10),
+            end: String(p.end_date).slice(0, 10),
+          },
+        ]);
+      }
+      setParkingSupport(!!p.parking_support);
+      setRemarks(p.remarks ?? "");
+      setRoomByDate(roomMap);
+      const hasWeekendRoom = Object.keys(roomMap).some((d) => isWeekendDate(d));
+      setIncludeWeekends(hasWeekendRoom);
+    }
+
+    if (isDevMode()) {
+      const p = devStore.getProject(projectId);
+      if (!p) {
+        setProject(null);
+        setLoading(false);
+        return;
+      }
+      const rooms = devStore.getRooms(projectId) ?? [];
+      const map: Record<string, string> = {};
+      rooms.forEach((r) => {
+        map[r.date] = r.room_name;
+      });
+      applyLoaded(p, map);
+      setLoading(false);
+      return;
+    }
+
+    async function load() {
+      const { data, error: e } = await supabase.from("projects").select("*").eq("id", projectId).single();
+      if (e || !data) {
+        setProject(null);
+        setLoading(false);
+        return;
+      }
+      const p = data as Project;
+      const { data: rooms } = await supabase.from("project_rooms").select("date, room_name").eq("project_id", projectId);
+      const map: Record<string, string> = {};
+      (rooms || []).forEach((r: { date: string; room_name: string }) => {
+        map[r.date] = r.room_name;
+      });
+      applyLoaded(p, map);
+      setLoading(false);
+    }
+    void load();
+  }, [projectId, devStore.data]);
+
+  const rangesRows =
+    Array.isArray(ranges) && ranges.length > 0 ? ranges : [{ start: "", end: "" }];
 
   const normalizedRanges = (() => {
-    return ranges
+    return rangesRows
       .map((r) => ({ start: String(r.start ?? "").trim().slice(0, 10), end: String(r.end ?? "").trim().slice(0, 10) }))
       .filter((r) => isDateStr(r.start) && isDateStr(r.end) && r.start <= r.end);
   })();
@@ -91,9 +164,8 @@ export default function NewProjectPage() {
   })();
 
   const rangesLabel = (() => {
-    // 실제 생성된 날짜(dateList)를 연속 구간으로 묶어 표시 (주말 제외/띄엄띄엄 일정 반영)
     if (dateList.length === 0) return "";
-    const ranges: Array<{ start: string; end: string }> = [];
+    const merged: Array<{ start: string; end: string }> = [];
     const toTime = (ymd: string) => {
       const [y, m, d] = ymd.split("-").map(Number);
       return new Date(y, m - 1, d).getTime();
@@ -104,30 +176,38 @@ export default function NewProjectPage() {
       const next = dateList[i];
       const isConsecutive = toTime(next) - toTime(prev) === 24 * 60 * 60 * 1000;
       if (!isConsecutive) {
-        ranges.push({ start: curStart, end: prev });
+        merged.push({ start: curStart, end: prev });
         curStart = next;
       }
       prev = next;
     }
-    ranges.push({ start: curStart, end: prev });
-    return ranges
+    merged.push({ start: curStart, end: prev });
+    return merged
       .map((r) => (r.start === r.end ? formatMdDow(r.start) : `${formatMdDow(r.start)} ~ ${formatMdDow(r.end)}`))
       .join(", ");
   })();
 
   const addRange = () => {
-    const t = todayString();
-    setRanges((prev) => [...prev, { start: t, end: t }]);
+    const t = rangesRows[rangesRows.length - 1]?.end || project?.end_date?.slice(0, 10) || "";
+    const seed = isDateStr(t) ? t : new Date().toISOString().slice(0, 10);
+    setRanges((prev) => [...prev, { start: seed, end: seed }]);
     setError("");
   };
 
   const removeRange = (idx: number) => {
-    setRanges((prev) => prev.filter((_, i) => i !== idx));
+    setRanges((prev) => {
+      const list = Array.isArray(prev) ? prev : [];
+      const next = list.filter((_, i) => i !== idx);
+      return next.length > 0 ? next : [{ start: "", end: "" }];
+    });
     setError("");
   };
 
   const updateRange = (idx: number, key: "start" | "end", value: string) => {
-    setRanges((prev) => prev.map((r, i) => (i === idx ? { ...r, [key]: value.slice(0, 10) } : r)));
+    setRanges((prev) => {
+      const list = Array.isArray(prev) ? prev : [{ start: "", end: "" }];
+      return list.map((r, i) => (i === idx ? { ...r, [key]: value.slice(0, 10) } : r));
+    });
   };
 
   const applyRoomsToAll = () => {
@@ -146,15 +226,13 @@ export default function NewProjectPage() {
     setRoomByDate((prev) => ({ ...prev, [date]: value }));
   };
 
-  /** 날짜별 룸에서 해당 일 제거 → 사용 일정을 연속 구간으로 재구성 (예: 3/26 제거 시 3/18~25, 3/27~30) */
   const removeDateFromSchedule = (ymd: string) => {
     if (dateList.length <= 1) {
       setError("사용 일자는 최소 1일 이상 필요합니다.");
       return;
     }
     const nextDates = dateList.filter((d) => d !== ymd);
-    const newRanges = datesYmdToConsecutiveRanges(nextDates);
-    setRanges(newRanges);
+    setRanges(datesYmdToConsecutiveRanges(nextDates));
     setRoomByDate((prev) => {
       const n = { ...prev };
       delete n[ymd];
@@ -184,73 +262,87 @@ export default function NewProjectPage() {
     const sDate = sortedDays[0];
     const eDate = sortedDays[sortedDays.length - 1];
     setSaving(true);
-    setError("");
     try {
-      if (isDevMode()) {
-        const roomList = dateList.map((date) => ({
-          date,
-          room_name: (roomByDate[date] ?? "").trim() || "미지정",
-        }));
-        devStore.createProject(
-          {
-            org_name: name,
-            manager: mgr,
-            start_date: sDate,
-            end_date: eDate,
-            parking_support,
-            remarks: String(remarks ?? "").trim() || null,
-          },
-          roomList
-        );
-        window.location.href = "/";
-        return;
-      }
+      const roomList = dateList.map((date) => ({
+        date,
+        room_name: (roomByDate[date] ?? "").trim() || "미지정",
+      }));
 
-      const { data: project, error: projectError } = await supabase
-        .from("projects")
-        .insert({
+      if (isDevMode()) {
+        devStore.updateProject(projectId, {
           org_name: name,
           manager: mgr,
           start_date: sDate,
           end_date: eDate,
           parking_support,
           remarks: String(remarks ?? "").trim() || null,
+        });
+        devStore.saveRooms(projectId, roomList);
+        // SPA 이동+refresh는 dev에서 .next 청크 불일치(Cannot find module './xxx.js')를 유발할 수 있어 전체 이동
+        window.location.href = "/";
+        return;
+      }
+
+      const { error: updateError } = await supabase
+        .from("projects")
+        .update({
+          org_name: name,
+          manager: mgr,
+          start_date: sDate,
+          end_date: eDate,
+          parking_support,
+          remarks: String(remarks ?? "").trim() || null,
+          updated_at: new Date().toISOString(),
         })
-        .select("id")
-        .single();
+        .eq("id", projectId);
+      if (updateError) throw updateError;
 
-      if (projectError) throw projectError;
-      if (!project?.id) throw new Error("프로젝트 생성 실패");
-
-      if (dateList.length > 0) {
-        const rooms = dateList.map((date) => ({
-          project_id: project.id,
-          date,
-          room_name: (roomByDate[date] ?? "").trim() || "미지정",
+      await supabase.from("project_rooms").delete().eq("project_id", projectId);
+      if (roomList.length > 0) {
+        const rows = roomList.map((r) => ({
+          project_id: projectId,
+          date: r.date,
+          room_name: r.room_name,
         }));
-        const { error: roomsError } = await supabase
-          .from("project_rooms")
-          .insert(rooms);
+        const { error: roomsError } = await supabase.from("project_rooms").insert(rows);
         if (roomsError) throw roomsError;
       }
 
       window.location.href = "/";
     } catch (err: unknown) {
-      const message =
+      const msg =
         err instanceof Error
           ? err.message
-          : (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string")
+          : err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string"
             ? String((err as { message: string }).message)
-            : String(err) || "저장 중 오류가 발생했습니다.";
-      setError(
-        message.includes("Supabase") || message.includes("fetch") || message.includes("network")
-          ? `${message} Supabase가 연결되지 않았을 수 있습니다. 테스트하려면 .env.local에 NEXT_PUBLIC_SUPABASE_URL을 비우거나 'placeholder'로 두면 개발자 모드(로컬 저장)로 동작합니다.`
-          : message
-      );
+            : "저장 중 오류가 발생했습니다.";
+      setError(msg);
     } finally {
       setSaving(false);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[var(--bg)] p-8">
+        <p className="text-[var(--text-muted)]">로딩 중...</p>
+        <Link href="/" className="mt-4 inline-flex items-center gap-2 text-[var(--primary)] hover:underline">
+          <ArrowLeft className="h-4 w-4" /> 대시보드
+        </Link>
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="min-h-screen bg-[var(--bg)] p-8">
+        <p className="text-red-600">기관을 찾을 수 없습니다.</p>
+        <Link href="/" className="mt-4 inline-flex items-center gap-2 text-[var(--primary)] hover:underline">
+          <ArrowLeft className="h-4 w-4" /> 대시보드
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[var(--bg)]">
@@ -264,29 +356,19 @@ export default function NewProjectPage() {
             >
               <Home className="h-4 w-4" />
             </Link>
-            <h1 className="text-xl font-semibold text-[var(--text)]">기관 등록</h1>
+            <h1 className="text-xl font-semibold text-[var(--text)]">기관 정보 수정</h1>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-4xl px-6 py-8">
         <div className="mb-8 flex flex-wrap items-center gap-3">
-          <h2 className="text-lg font-semibold text-[var(--text)]">기관 및 담당자 등록</h2>
+          <h2 className="text-lg font-semibold text-[var(--text)]">기관 및 일정 · 룸</h2>
           {isDevMode() && (
             <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
-              개발자 모드 — 브라우저에 저장되며 등록 후 대시보드로 이동합니다.
+              개발자 모드 — 브라우저에 저장됩니다.
             </span>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              setForceDevMode(true);
-              window.location.reload();
-            }}
-            className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
-          >
-            {isDevMode() ? "로컬 저장 모드 유지 (새로고침)" : "Supabase 없이 테스트하기 (로컬 저장)"}
-          </button>
         </div>
 
         <form
@@ -298,8 +380,10 @@ export default function NewProjectPage() {
           }}
         >
           <p className="text-sm text-[var(--text-muted)]">
-            사용 일자(시작/종료)를 입력하시면 아래에 <strong className="text-[var(--text)]">날짜별 사용 룸</strong>을 개별 지정하거나 &quot;룸 일괄 적용&quot; 버튼으로 한 번에 지정할 수 있습니다.
+            사용 일자(시작/종료)를 입력하시면 아래에 <strong className="text-[var(--text)]">날짜별 사용 룸</strong>을 개별 지정하거나
+            &quot;룸 일괄 적용&quot;으로 한 번에 지정할 수 있습니다. 기본 정보와 룸을 함께 저장합니다.
           </p>
+
           <div className="card card-hover p-6">
             <div className="grid gap-5 sm:grid-cols-2">
               <div>
@@ -328,9 +412,8 @@ export default function NewProjectPage() {
                     <label className="mb-2 block text-sm font-medium text-[var(--text)]">사용 일자 (시작) *</label>
                     <input
                       type="date"
-                      value={ranges[0]?.start ?? ""}
+                      value={rangesRows[0]?.start ?? ""}
                       onChange={(e) => updateRange(0, "start", e.target.value || "")}
-                      onBlur={(e) => updateRange(0, "start", e.target.value || (ranges[0]?.start ?? ""))}
                       className="input w-full px-3 py-2.5 text-[var(--text)]"
                     />
                   </div>
@@ -338,9 +421,8 @@ export default function NewProjectPage() {
                     <label className="mb-2 block text-sm font-medium text-[var(--text)]">사용 일자 (종료) *</label>
                     <input
                       type="date"
-                      value={ranges[0]?.end ?? ""}
+                      value={rangesRows[0]?.end ?? ""}
                       onChange={(e) => updateRange(0, "end", e.target.value || "")}
-                      onBlur={(e) => updateRange(0, "end", e.target.value || (ranges[0]?.end ?? ""))}
                       className="input w-full px-3 py-2.5 text-[var(--text)]"
                     />
                   </div>
@@ -355,9 +437,9 @@ export default function NewProjectPage() {
                 </div>
               </div>
 
-              {ranges.length > 1 && (
+              {rangesRows.length > 1 && (
                 <div className="sm:col-span-2 space-y-3">
-                  {ranges.slice(1).map((r, offset) => {
+                  {rangesRows.slice(1).map((r, offset) => {
                     const idx = offset + 1;
                     return (
                       <div key={`range-${idx}`} className="flex flex-wrap items-end gap-3">
@@ -384,11 +466,7 @@ export default function NewProjectPage() {
                           />
                         </div>
                         <div className="hidden sm:block flex-1" />
-                        <button
-                          type="button"
-                          onClick={() => removeRange(idx)}
-                          className="w-full sm:w-auto text-xs font-semibold text-red-600 hover:underline"
-                        >
+                        <button type="button" onClick={() => removeRange(idx)} className="w-full sm:w-auto text-xs font-semibold text-red-600 hover:underline">
                           삭제
                         </button>
                       </div>
@@ -403,31 +481,25 @@ export default function NewProjectPage() {
                     <span className="text-sm font-semibold text-[var(--text)]">선택된 기간</span>
                     <span
                       className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${
-                        includeWeekends
-                          ? "border-indigo-200 bg-indigo-50 text-indigo-700"
-                          : "border-slate-200 bg-slate-50 text-slate-700"
+                        includeWeekends ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-slate-50 text-slate-700"
                       }`}
                     >
                       {includeWeekends ? "주말 포함" : "주말 제외"}
                     </span>
-                    <span className="ml-auto rounded-full bg-amber-50 px-2.5 py-1 text-sm font-bold text-amber-700">
-                      총 {dateList.length}일 사용
-                    </span>
+                    <span className="ml-auto rounded-full bg-amber-50 px-2.5 py-1 text-sm font-bold text-amber-700">총 {dateList.length}일 사용</span>
                   </div>
-                  <p className="mt-2 text-sm text-[var(--text-muted)] break-words">
-                    {rangesLabel}
-                  </p>
+                  <p className="mt-2 text-sm text-[var(--text-muted)] break-words">{rangesLabel}</p>
                 </div>
               )}
               <div className="sm:col-span-2">
                 <span className="mb-2 block text-sm font-medium text-[var(--text)]">주차지원 여부</span>
                 <div className="flex gap-6">
                   <label className="flex cursor-pointer items-center gap-2 text-[var(--text-muted)]">
-                    <input type="radio" name="parking_support" checked={parking_support === true} onChange={() => setParkingSupport(true)} className="accent-[var(--primary)]" />
+                    <input type="radio" name="parking_support_edit" checked={parking_support === true} onChange={() => setParkingSupport(true)} className="accent-[var(--primary)]" />
                     <span className="font-medium">O (지원함)</span>
                   </label>
                   <label className="flex cursor-pointer items-center gap-2 text-[var(--text-muted)]">
-                    <input type="radio" name="parking_support" checked={parking_support === false} onChange={() => setParkingSupport(false)} className="accent-[var(--primary)]" />
+                    <input type="radio" name="parking_support_edit" checked={parking_support === false} onChange={() => setParkingSupport(false)} className="accent-[var(--primary)]" />
                     <span>X (지원 안 함)</span>
                   </label>
                 </div>
@@ -452,9 +524,7 @@ export default function NewProjectPage() {
                   날짜별 사용 룸 ({dateList.length}일)
                   <span
                     className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${
-                      includeWeekends
-                        ? "border-indigo-200 bg-indigo-50 text-indigo-700"
-                        : "border-slate-200 bg-slate-50 text-slate-700"
+                      includeWeekends ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-slate-50 text-slate-700"
                     }`}
                   >
                     {includeWeekends ? "주말 포함" : "주말 제외"}
@@ -467,18 +537,12 @@ export default function NewProjectPage() {
                       setIncludeWeekends((v) => !v);
                       setError("");
                     }}
-                    className={`btn inline-flex items-center gap-2 px-4 py-2 text-sm rounded-xl ${
-                      includeWeekends ? "btn-primary" : "btn-relief"
-                    }`}
+                    className={`btn inline-flex items-center gap-2 px-4 py-2 text-sm rounded-xl ${includeWeekends ? "btn-primary" : "btn-relief"}`}
                     aria-pressed={includeWeekends}
                   >
                     주말 포함
                   </button>
-                  <button
-                    type="button"
-                    onClick={applyRoomsToAll}
-                    className="btn btn-relief inline-flex items-center gap-2 px-4 py-2 text-sm rounded-xl"
-                  >
+                  <button type="button" onClick={applyRoomsToAll} className="btn btn-relief inline-flex items-center gap-2 px-4 py-2 text-sm rounded-xl">
                     <Copy className="h-4 w-4" />
                     룸 일괄 적용
                   </button>
@@ -514,21 +578,12 @@ export default function NewProjectPage() {
             </div>
           )}
 
-          {error && (
-            <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-              {error}
-            </p>
-          )}
+          {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
 
           <div className="flex gap-3">
-            <button
-              type="submit"
-              name="register"
-              disabled={saving}
-              className="btn btn-primary inline-flex items-center gap-2 px-5 py-2.5 text-sm disabled:opacity-50"
-            >
+            <button type="submit" disabled={saving} className="btn btn-primary inline-flex items-center gap-2 px-5 py-2.5 text-sm disabled:opacity-50">
               <Save className="h-4 w-4" />
-              {saving ? "저장 중..." : "등록"}
+              {saving ? "저장 중..." : "수정 저장"}
             </button>
             <Link href="/" className="btn inline-flex items-center gap-2 px-5 py-2.5 text-sm">
               <ArrowLeft className="h-4 w-4" />

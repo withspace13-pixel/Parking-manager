@@ -77,7 +77,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const getProjects = useCallback(() => {
-    return [...data.projects].sort(
+    return [...(data.projects ?? [])].sort(
       (a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime()
     );
   }, [data.projects]);
@@ -85,7 +85,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
   const getProjectsByDate = useCallback(
     (date: string) => {
       const d = new Date(date);
-      return data.projects.filter((p) => {
+      return (data.projects ?? []).filter((p) => {
         const s = new Date(p.start_date).getTime();
         const e = new Date(p.end_date).getTime();
         const t = d.getTime();
@@ -96,7 +96,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const getProject = useCallback(
-    (id: string) => data.projects.find((p) => p.id === id) ?? null,
+    (id: string) => (data.projects ?? []).find((p) => p.id === id) ?? null,
     [data.projects]
   );
 
@@ -110,9 +110,9 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
         room_name: r.room_name,
       }));
       const next: DevData = {
-        projects: [...data.projects, project],
-        project_rooms: [...data.project_rooms, ...rooms],
-        parking_records: data.parking_records,
+        projects: [...(data.projects ?? []), project],
+        project_rooms: [...(data.project_rooms ?? []), ...rooms],
+        parking_records: data.parking_records ?? [],
       };
       save(next);
       return project;
@@ -124,7 +124,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
     (id: string, input: Partial<Omit<Project, "id">>) => {
       const next = {
         ...data,
-        projects: data.projects.map((p) =>
+        projects: (data.projects ?? []).map((p) =>
           p.id === id ? { ...p, ...input } : p
         ),
       };
@@ -135,13 +135,13 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
 
   const getRooms = useCallback(
     (projectId: string) =>
-      data.project_rooms.filter((r) => r.project_id === projectId),
+      (data.project_rooms ?? []).filter((r) => r.project_id === projectId),
     [data.project_rooms]
   );
 
   const saveRooms = useCallback(
     (projectId: string, rooms: { date: string; room_name: string }[]) => {
-      const rest = data.project_rooms.filter((r) => r.project_id !== projectId);
+      const rest = (data.project_rooms ?? []).filter((r) => r.project_id !== projectId);
       const newRooms: ProjectRoom[] = rooms.map((r) => ({
         id: uuid(),
         project_id: projectId,
@@ -158,7 +158,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
 
   const getParkingRecords = useCallback(
     (projectId: string, date?: string) => {
-      let list = data.parking_records.filter((r) => r.project_id === projectId);
+      let list = (data.parking_records ?? []).filter((r) => r.project_id === projectId);
       if (date) list = list.filter((r) => r.date === date);
       // 입력한 순서 유지 (정렬 없음)
       return list;
@@ -168,7 +168,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
 
   const upsertParkingRecord = useCallback(
     (record: Omit<ParkingRecord, "id">) => {
-      const existing = data.parking_records.find(
+      const existing = (data.parking_records ?? []).find(
         (r) =>
           r.project_id === record.project_id &&
           r.vehicle_num === record.vehicle_num &&
@@ -179,14 +179,14 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
         : { ...record, id: uuid() };
 
       const nextRecords = existing
-        ? data.parking_records.map((r) =>
+        ? (data.parking_records ?? []).map((r) =>
             r.project_id === record.project_id &&
             r.vehicle_num === record.vehicle_num &&
             r.date === record.date
               ? updated
               : r
           )
-        : [...data.parking_records, updated];
+        : [...(data.parking_records ?? []), updated];
 
       save({ ...data, parking_records: nextRecords });
       return updated;
@@ -198,7 +198,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
     (id: string) => {
       save({
         ...data,
-        parking_records: data.parking_records.filter((r) => r.id !== id),
+        parking_records: (data.parking_records ?? []).filter((r) => r.id !== id),
       });
     },
     [data, save]
@@ -207,9 +207,9 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
   const deleteProject = useCallback(
     (id: string) => {
       save({
-        projects: data.projects.filter((p) => p.id !== id),
-        project_rooms: data.project_rooms.filter((r) => r.project_id !== id),
-        parking_records: data.parking_records.filter((r) => r.project_id !== id),
+        projects: (data.projects ?? []).filter((p) => p.id !== id),
+        project_rooms: (data.project_rooms ?? []).filter((r) => r.project_id !== id),
+        parking_records: (data.parking_records ?? []).filter((r) => r.project_id !== id),
       });
     },
     [data, save]

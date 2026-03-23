@@ -4,12 +4,20 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:turbo": "next dev --turbo",
+    "dev:webpack": "next dev",
+    "clean": "node -e \"const fs=require('fs'),p=require('path');function rm(a){try{fs.rmSync(a,{recursive:true,force:true})}catch(e){}};rm('.next');rm(p.join('node_modules','.cache'));\"",
+    "dev:clean": "npm run clean && next dev",
+    "dev:clean:turbo": "npm run clean && next dev --turbo",
+    "dev:clean:webpack": "npm run clean && next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
     "lucide-react": "^0.460.0",
     "next": "14.2.18",
     "react": "^18.3.1",
@@ -19,9 +27,9 @@
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "autoprefixer": "^10",
     "eslint": "^8",
     "eslint-config-next": "14.2.18",
-    "autoprefixer": "^10",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "typescript": "^5"

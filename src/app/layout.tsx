@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { CSSProperties } from "react";
 import { Nunito } from "next/font/google";
 import "./globals.css";
 import { DevModeWrapper } from "@/components/DevModeWrapper";
@@ -19,9 +20,17 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  /* globals.css 청크 로딩 실패(.next 불일치 등) 시에도 배경·글자색·글꼴이 기본값으로 보이도록 */
+  const baseBodyStyle: CSSProperties = {
+    backgroundColor: "#F8FAFC",
+    color: "#1E293B",
+    fontFamily: 'system-ui, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif',
+    minHeight: "100vh",
+  };
+
   return (
     <html lang="ko" className={nunito.variable}>
-      <body className="min-h-screen font-sans antialiased">
+      <body className="min-h-screen font-sans antialiased" style={baseBodyStyle}>
         <DevModeWrapper>{children}</DevModeWrapper>
       </body>
     </html>
