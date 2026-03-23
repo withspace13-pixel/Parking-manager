@@ -66,14 +66,17 @@ export default function HomePage() {
       return;
     }
     setLoading(true);
-    supabase
-      .from("projects")
-      .select("*")
-      .order("start_date", { ascending: false })
-      .then(({ data, error }) => {
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("projects")
+          .select("*")
+          .order("start_date", { ascending: false });
         if (!error) setAllProjects(data || []);
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [devStore.data]);
 
   const activeProjects = useMemo(
