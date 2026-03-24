@@ -6,7 +6,7 @@
     "dev": "next dev",
     "dev:turbo": "next dev --turbo",
     "dev:webpack": "next dev",
-    "clean": "node -e \"const fs=require('fs'),p=require('path');function rm(a){try{fs.rmSync(a,{recursive:true,force:true})}catch(e){}};rm('.next');rm(p.join('node_modules','.cache'));\"",
+    "clean": "node -e \"const fs=require('fs'),p=require('path');function rm(a){try{fs.rmSync(a,{recursive:true,force:true})}catch(e){}};rm('.next');rm('.next-dev');rm(p.join('node_modules','.cache'));\"",
     "dev:clean": "npm run clean && next dev",
     "dev:clean:turbo": "npm run clean && next dev --turbo",
     "dev:clean:webpack": "npm run clean && next dev",

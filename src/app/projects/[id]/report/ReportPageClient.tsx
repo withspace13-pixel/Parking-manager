@@ -242,9 +242,19 @@ export default function ReportPageClient() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-8">
+      <main className="mx-auto max-w-6xl px-8 py-10">
         <div ref={pdfExportRef}>
-        <div className="card-raise mb-8 p-6">
+        <div className="report-paper mb-8 p-8">
+          <div className="mb-6 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Parking Invoice</p>
+              <h2 className="mt-2 text-3xl font-extrabold text-[var(--text)]">주차권 발급 정산서</h2>
+            </div>
+            <div className="text-right text-sm text-[var(--text-muted)]">
+              <p>정산일자</p>
+              <p className="mt-1 text-base font-semibold text-[var(--text)]">{new Date().toISOString().slice(0, 10)}</p>
+            </div>
+          </div>
           <div className="grid gap-6 sm:grid-cols-2">
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">기관명</p>
@@ -263,46 +273,46 @@ export default function ReportPageClient() {
           </p>
         </div>
 
-        <div className="card-raise mb-8 overflow-hidden p-0">
-          <div className="flex items-center justify-between border-b border-[var(--border)] px-6 py-4">
+        <div className="report-paper mb-8 overflow-hidden p-0">
+          <div className="flex items-center justify-between border-b border-[var(--border)] px-8 py-5">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
               <Calculator className="h-4 w-4 text-[var(--text-muted)]" />
               일자별 발급 수량 및 정산 금액 (무료 건 제외)
             </h3>
           </div>
-          <table className="w-full text-left text-sm">
+          <table className="report-table report-table-compact text-left text-sm">
             <thead>
               <tr className="text-[var(--text-muted)]">
-                <th className="px-6 py-4 font-medium text-[var(--text)]">일자</th>
-                <th className="px-4 py-4 text-center font-medium text-[var(--text)]">종일권</th>
-                <th className="px-4 py-4 text-center font-medium text-[var(--text)]">2시간</th>
-                <th className="px-4 py-4 text-center font-medium text-[var(--text)]">1시간</th>
-                <th className="px-4 py-4 text-center font-medium text-[var(--text)]">30분</th>
-                <th className="px-6 py-4 text-right font-medium text-[var(--text)]">일자 합계</th>
+                <th className="font-medium text-[var(--text)]">일자</th>
+                <th className="text-center font-medium text-[var(--text)]">종일권</th>
+                <th className="text-center font-medium text-[var(--text)]">2시간</th>
+                <th className="text-center font-medium text-[var(--text)]">1시간</th>
+                <th className="text-center font-medium text-[var(--text)]">30분</th>
+                <th className="text-right font-medium text-[var(--text)]">일자 합계</th>
               </tr>
             </thead>
             <tbody>
               {daySummaries.map((row) => (
                 <tr key={row.date} className="table-row-hover">
-                  <td className="px-6 py-4 text-[var(--text-muted)]">{monthDay(row.date)}</td>
-                  <td className="px-4 py-4 text-center text-[var(--text-muted)]">{row.all_day_cnt}매</td>
-                  <td className="px-4 py-4 text-center text-[var(--text-muted)]">{row["2h_cnt"]}매</td>
-                  <td className="px-4 py-4 text-center text-[var(--text-muted)]">{row["1h_cnt"]}매</td>
-                  <td className="px-4 py-4 text-center text-[var(--text-muted)]">{row["30m_cnt"]}매</td>
-                  <td className="px-6 py-4 text-right text-[var(--text)]">{row.amount.toLocaleString()}원</td>
+                  <td className="text-[var(--text-muted)]">{monthDay(row.date)}</td>
+                  <td className="text-center text-[var(--text-muted)]">{row.all_day_cnt}매</td>
+                  <td className="text-center text-[var(--text-muted)]">{row["2h_cnt"]}매</td>
+                  <td className="text-center text-[var(--text-muted)]">{row["1h_cnt"]}매</td>
+                  <td className="text-center text-[var(--text-muted)]">{row["30m_cnt"]}매</td>
+                  <td className="text-right text-[var(--text)]">{row.amount.toLocaleString()}원</td>
                 </tr>
               ))}
-              <tr className="border-t border-[var(--border)]">
-                <td className="px-6 py-5 font-semibold text-[var(--text)]">합계</td>
-                <td className="px-4 py-5 text-center font-semibold text-[var(--text)]">{totals.all_day_cnt}매</td>
-                <td className="px-4 py-5 text-center font-semibold text-[var(--text)]">{totals["2h_cnt"]}매</td>
-                <td className="px-4 py-5 text-center font-semibold text-[var(--text)]">{totals["1h_cnt"]}매</td>
-                <td className="px-4 py-5 text-center font-semibold text-[var(--text)]">{totals["30m_cnt"]}매</td>
-                <td className="px-6 py-5 text-right text-3xl font-bold text-emboss">{totals.amount.toLocaleString()}원</td>
+              <tr>
+                <td className="font-semibold text-[var(--text)]">합계</td>
+                <td className="text-center font-semibold text-[var(--text)]">{totals.all_day_cnt}매</td>
+                <td className="text-center font-semibold text-[var(--text)]">{totals["2h_cnt"]}매</td>
+                <td className="text-center font-semibold text-[var(--text)]">{totals["1h_cnt"]}매</td>
+                <td className="text-center font-semibold text-[var(--text)]">{totals["30m_cnt"]}매</td>
+                <td className="text-right text-3xl font-extrabold text-emboss">{totals.amount.toLocaleString()}원</td>
               </tr>
             </tbody>
           </table>
-          <p className="px-6 pb-4 pt-2 text-sm font-semibold text-red-600">
+          <p className="px-8 pb-5 pt-2 text-sm font-semibold text-red-600">
             ※ 위 수량 및 금액은 아래 무료 적용 차량(1일 1대 최상위 금액) 건을 제외한 기준입니다.
           </p>
         </div>
@@ -363,7 +373,7 @@ export default function ReportPageClient() {
           </p>
         </div>
 
-        <div className="mt-8 card-raise overflow-hidden p-0">
+        <div className="mt-8 rounded-2xl border border-[#D7E3F8] bg-[#F7FAFF] p-0">
           <h3 className="flex items-center gap-2 border-b border-[var(--border)] px-6 py-4 text-sm font-semibold text-[var(--text)]">
             <Receipt className="h-4 w-4 text-[var(--text-muted)]" />
             1일 1대 최상위 금액 차량 무료 적용 내역

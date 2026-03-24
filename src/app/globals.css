@@ -1,6 +1,7 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css");
 
 /* Modern Clean SaaS UI 스타일 */
 :root {
@@ -11,7 +12,7 @@
   --text-muted: #64748B;   /* 보조 회색 */
   --primary: #2563EB;      /* 버튼/포인트 블루 */
   --primary-hover: #1D4ED8;
-  --font-fallback: "Malgun Gothic", "Apple SD Gothic Neo", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-fallback: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 @layer base {
@@ -24,20 +25,26 @@
     color: var(--text);
     font-family: var(--font-round, inherit), var(--font-fallback);
     min-height: 100vh;
+    letter-spacing: -0.01em;
+    font-size: 17px;
+    line-height: 1.55;
   }
   h1, h2, h3, h4, h5, h6 {
     color: var(--text);
     font-weight: 600;
   }
+  h1 { font-size: 1.95rem; line-height: 1.25; }
+  h2 { font-size: 1.55rem; line-height: 1.3; }
+  h3 { font-size: 1.2rem; line-height: 1.35; }
 }
 
 @layer components {
   /* 플랫 SaaS 카드 */
   .card {
     background-color: var(--card);
-    border-radius: 1.5rem; /* rounded-3xl 느낌 */
+    border-radius: 1.25rem;
     border: 1px solid var(--border);
-    box-shadow: 0 10px 30px -22px rgba(15, 23, 42, 0.18);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
   }
   .card-hover {
     @apply transition-shadow duration-200;
@@ -49,19 +56,18 @@
   /* 큰 카드 (정산 요약 등) */
   .card-raise {
     background-color: var(--card);
-    border-radius: 1.75rem;
+    border-radius: 1.25rem;
     border: 1px solid var(--border);
-    /* 정산 영역은 그림자를 거의 없애고 플랫하게 보이도록 */
-    box-shadow: 0 6px 18px -14px rgba(15, 23, 42, 0.12);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
   }
 
   /* 입력 필드 – 심플 인풋 */
   .input {
-    background-color: #F9FBFF;
-    border-radius: 0.9rem;
+    background-color: #FFFFFF;
+    border-radius: 0.75rem;
     border: 1px solid var(--border);
     color: var(--text);
-    transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
   }
   .input::placeholder {
     color: var(--text-muted);
@@ -69,13 +75,12 @@
   .input:focus {
     outline: none;
     border-color: var(--primary);
-    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.25);
-    background-color: #FFFFFF;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
   }
 
   .input-inset {
-    background-color: #F9FBFF;
-    border-radius: 0.9rem;
+    background-color: #F8FAFC;
+    border-radius: 0.75rem;
     border: 1px solid var(--border);
     color: var(--text);
     transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
@@ -83,7 +88,7 @@
   .input-inset:focus {
     outline: none;
     border-color: var(--primary);
-    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.25);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
     background-color: #FFFFFF;
   }
 
@@ -91,16 +96,16 @@
   .btn {
     background-color: #EEF2FF;
     border-radius: 9999px;
-    border: 1px solid rgba(148, 163, 184, 0.25);
+    border: 1px solid #DBE3F4;
     color: var(--text);
-    font-weight: 500;
-    transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
-    box-shadow: 0 10px 28px -24px rgba(15, 23, 42, 0.45);
+    font-weight: 600;
+    transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.12s ease, box-shadow 0.2s ease;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
   }
   .btn:hover {
-    background-color: #E0E7FF;
-    border-color: rgba(148, 163, 184, 0.6);
-    box-shadow: 0 18px 40px -26px rgba(15, 23, 42, 0.55);
+    background-color: #E2E8FF;
+    border-color: #C9D6F5;
+    box-shadow: 0 8px 20px -16px rgba(37, 99, 235, 0.45);
   }
   .btn:active {
     transform: translateY(0.5px);
@@ -112,11 +117,11 @@
     border-radius: 9999px;
     border: 1px solid transparent;
     color: #FFFFFF;
-    box-shadow: 0 14px 40px -24px rgba(37, 99, 235, 0.9);
+    box-shadow: 0 10px 24px -16px rgba(37, 99, 235, 0.8);
   }
   .btn-primary:hover {
     background-color: var(--primary-hover);
-    box-shadow: 0 20px 55px -30px rgba(37, 99, 235, 0.95);
+    box-shadow: 0 14px 28px -18px rgba(37, 99, 235, 0.95);
   }
   .btn-primary:active {
     transform: translateY(0.5px);
@@ -147,4 +152,48 @@
     letter-spacing: 0.03em;
     font-weight: 700;
   }
+
+  .badge-pill {
+    @apply inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold;
+    border-color: #D7E0F0;
+    background-color: #F8FAFF;
+    color: #334155;
+  }
+
+  .report-paper {
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 1.25rem;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+
+  .report-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  .report-table thead th {
+    color: #64748B;
+    font-weight: 600;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #E2E8F0;
+  }
+  .report-table tbody td {
+    padding: 0.9rem 1rem;
+    border-bottom: 1px solid #F1F5F9;
+  }
+  .report-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .report-table-compact thead th {
+    padding: 0.6rem 0.9rem;
+  }
+  .report-table-compact tbody td {
+    padding: 0.65rem 0.9rem;
+  }
 }
+
+/* Tailwind 기본 글자 단계 상향(가독성 개선) */
+.text-xs { font-size: 0.82rem !important; line-height: 1.45 !important; }
+.text-sm { font-size: 0.96rem !important; line-height: 1.5 !important; }

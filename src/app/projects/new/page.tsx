@@ -282,7 +282,7 @@ export default function NewProjectPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-6 py-8">
+      <main className="mx-auto max-w-5xl px-8 py-10">
         <div className="mb-8 flex flex-wrap items-center gap-3">
           <h2 className="text-lg font-semibold text-[var(--text)]">기관 및 담당자 등록</h2>
           {isDevMode() && (
@@ -303,10 +303,10 @@ export default function NewProjectPage() {
           <p className="text-sm text-[var(--text-muted)]">
             사용 일자(시작/종료)를 입력하시면 아래에 <strong className="text-[var(--text)]">날짜별 사용 룸</strong>을 개별 지정하거나 &quot;룸 일괄 적용&quot; 버튼으로 한 번에 지정할 수 있습니다.
           </p>
-          <div className="card card-hover p-6">
+          <div className="card card-hover p-8">
             <div className="grid gap-5 sm:grid-cols-2">
               <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text)]">기관명 *</label>
+                <label className="mb-2 block text-sm font-medium text-[var(--text)]">기관명</label>
                 <input
                   type="text"
                   value={org_name}
@@ -316,7 +316,7 @@ export default function NewProjectPage() {
                 />
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text)]">담당자명 *</label>
+                <label className="mb-2 block text-sm font-medium text-[var(--text)]">담당자명</label>
                 <input
                   type="text"
                   value={manager}
@@ -328,7 +328,7 @@ export default function NewProjectPage() {
               <div className="sm:col-span-2">
                 <div className="flex flex-wrap items-end gap-3">
                   <div className="w-full sm:w-[260px]">
-                    <label className="mb-2 block text-sm font-medium text-[var(--text)]">사용 일자 (시작) *</label>
+                    <label className="mb-2 block text-sm font-medium text-[var(--text)]">사용 일자 (시작)</label>
                     <input
                       type="date"
                       value={ranges[0]?.start ?? ""}
@@ -338,7 +338,7 @@ export default function NewProjectPage() {
                     />
                   </div>
                   <div className="w-full sm:w-[260px]">
-                    <label className="mb-2 block text-sm font-medium text-[var(--text)]">사용 일자 (종료) *</label>
+                    <label className="mb-2 block text-sm font-medium text-[var(--text)]">사용 일자 (종료)</label>
                     <input
                       type="date"
                       value={ranges[0]?.end ?? ""}
@@ -366,7 +366,7 @@ export default function NewProjectPage() {
                       <div key={`range-${idx}`} className="flex flex-wrap items-end gap-3">
                         <div className="w-full sm:w-[260px]">
                           <label className="mb-2 block text-sm font-medium text-[var(--text)]">
-                            사용 일자 (시작) * <span className="text-[var(--text-muted)]">(추가 일정 {idx})</span>
+                            사용 일자 (시작) <span className="text-[var(--text-muted)]">(추가 일정 {idx})</span>
                           </label>
                           <input
                             type="date"
@@ -377,7 +377,7 @@ export default function NewProjectPage() {
                         </div>
                         <div className="w-full sm:w-[260px]">
                           <label className="mb-2 block text-sm font-medium text-[var(--text)]">
-                            사용 일자 (종료) * <span className="text-[var(--text-muted)]">(추가 일정 {idx})</span>
+                            사용 일자 (종료) <span className="text-[var(--text-muted)]">(추가 일정 {idx})</span>
                           </label>
                           <input
                             type="date"
@@ -455,7 +455,7 @@ export default function NewProjectPage() {
           </div>
 
           {dateList.length > 0 && (
-            <div className="card card-hover p-6">
+            <div className="card card-hover p-8">
               <div
                 className="mb-4 flex items-center justify-between"
                 style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
@@ -497,8 +497,10 @@ export default function NewProjectPage() {
                       });
                       setError("");
                     }}
-                    className={`btn inline-flex items-center gap-2 px-4 py-2 text-sm rounded-xl ${
-                      includeWeekends ? "btn-primary" : "btn-relief"
+                    className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold transition-colors ${
+                      includeWeekends
+                        ? "border-indigo-500 bg-indigo-600 text-white hover:bg-indigo-700"
+                        : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
                     }`}
                     aria-pressed={includeWeekends}
                   >
@@ -532,7 +534,7 @@ export default function NewProjectPage() {
                       type="button"
                       onClick={() => removeDateFromSchedule(date)}
                       disabled={dateList.length <= 1}
-                      className="shrink-0 rounded-lg border border-slate-200 p-2 text-slate-500 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-500"
+                      className="shrink-0 rounded-lg border border-red-200 bg-red-50 p-2 text-red-600 transition-colors hover:border-red-300 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-50 disabled:hover:text-red-600"
                       title="이 날짜를 사용 일정에서 제외"
                       aria-label={`${formatMdDow(date)} 제외`}
                     >

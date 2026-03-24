@@ -61,6 +61,19 @@ function monthDay(d: string) {
   return `${m}/${day}`;
 }
 
+function toMonthDayParts(ymd: string) {
+  const [, m, d] = String(ymd).slice(0, 10).split("-");
+  return { m: Number(m), d: Number(d) };
+}
+
+function formatCompactRange(start: string, end: string) {
+  const s = toMonthDayParts(start);
+  const e = toMonthDayParts(end);
+  if (start === end) return `${s.m}/${s.d}`;
+  if (s.m === e.m) return `${s.m}/${s.d} ~ ${e.d}`;
+  return `${s.m}/${s.d} ~ ${e.m}/${e.d}`;
+}
+
 function isYmd(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(s).trim());
 }
@@ -99,6 +112,7 @@ export default function SettlementPageClient() {
   const [eventDates, setEventDates] = useState<string[]>([]);
   const pdfExportRef = useRef<HTMLDivElement>(null);
   const [pdfSaving, setPdfSaving] = useState(false);
+  const [settlementEditorOpen, setSettlementEditorOpen] = useState(false);
   /** 정산에 포함할 기간(행사 start~end 범위 내). 기본은 행사 전체 */
   const [settlementRanges, setSettlementRanges] = useState<Array<{ start: string; end: string }>>([]);
   /** 정산 일자 집계 시 주말 포함(기본: 제외) */
@@ -189,9 +203,25 @@ export default function SettlementPageClient() {
         : `${shortDate(project.start_date)} ~ ${shortDate(project.end_date)}`;
     }
     return datesYmdToConsecutiveRanges(eventDates)
-      .map((r) => (r.start === r.end ? shortDate(r.start) : `${shortDate(r.start)} ~ ${shortDate(r.end)}`))
-      .join(", ");
+      .map((r) => formatCompactRange(r.start, r.end))
+      .join(" ,   ");
   }, [eventDates, project]);
+
+  const settlementLabelCompact = useMemo(() => {
+    if (!settlementDatesSorted.length) return "선택된 정산 일자가 없습니다.";
+    return datesYmdToConsecutiveRanges(settlementDatesSorted)
+      .map((r) => formatCompactRange(r.start, r.end))
+      .join(" ,   ");
+  }, [settlementDatesSorted]);
+
+  const isSettlementSameAsUsage = useMemo(() => {
+    const usage = eventDates;
+    if (usage.length !== settlementDatesSorted.length) return false;
+    for (let i = 0; i < usage.length; i++) {
+      if (usage[i] !== settlementDatesSorted[i]) return false;
+    }
+    return true;
+  }, [eventDates, settlementDatesSorted]);
 
 
   const { dayFreeList, daySummaries, totals } = useMemo(() => {
@@ -323,6 +353,7 @@ export default function SettlementPageClient() {
 
   const handlePdfDownload = async () => {
     if (!pdfExportRef.current || !project) return;
+    setSettlementEditorOpen(false);
     setPdfSaving(true);
     try {
       const { downloadParkingHistoryPdf } = await import("@/lib/parking-history-pdf");
@@ -375,9 +406,27 @@ export default function SettlementPageClient() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-8">
+      <main className="mx-auto max-w-6xl px-8 py-10">
         <div ref={pdfExportRef}>
-        <div className="card-raise mb-8 p-6">
+        <div className="report-paper mb-8 p-8">
+          <div className="mb-6 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Parking Invoice</p>
+              <h2 className="mt-2 text-3xl font-extrabold text-[var(--text)]">주차권 발급 정산서</h2>
+            </div>
+            <div className="text-right">
+              <button
+                type="button"
+                onClick={() => setSettlementEditorOpen((prev) => !prev)}
+                className="btn btn-relief px-4 py-2 text-sm"
+              >
+                정산 기간 수정
+              </button>
+              <p className="mt-2 text-sm font-semibold text-[var(--text)]">
+                {isSettlementSameAsUsage ? "사용 일자와 동일" : settlementLabelCompact}
+              </p>
+            </div>
+          </div>
           <div className="grid gap-6 sm:grid-cols-2">
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">기관명</p>
@@ -393,121 +442,118 @@ export default function SettlementPageClient() {
           </p>
         </div>
 
-        <div className="card mb-8 p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm font-semibold text-[var(--text)]">정산 기간</p>
-            <button type="button" onClick={resetSettlementRanges} className="btn btn-relief shrink-0 px-4 py-2.5 text-sm">
-              전체 행사 기간
-            </button>
-          </div>
-          <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm font-medium text-[var(--text)]">
-            <input
-              type="checkbox"
-              checked={includeWeekendsInSettlement}
-              onChange={(e) => setIncludeWeekendsInSettlement(e.target.checked)}
-              className="h-4 w-4 rounded border-[var(--border)] accent-[var(--primary)]"
-            />
-            주말 포함
-          </label>
-          <div className="mt-4 space-y-4">
-            {settlementRanges.map((r, idx) => (
-              <div key={`settle-${idx}`} className="flex flex-wrap items-end gap-3">
-                <div>
-                  <label className="mb-1.5 block text-sm font-semibold text-[var(--text)]">시작</label>
-                  <input
-                    type="date"
-                    min={projectMin}
-                    max={projectMax}
-                    value={r.start}
-                    onChange={(e) => updateSettlementRange(idx, "start", e.target.value)}
-                    className="input min-h-[48px] min-w-[200px] px-4 py-3 text-base text-[var(--text)]"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-sm font-semibold text-[var(--text)]">종료</label>
-                  <input
-                    type="date"
-                    min={projectMin}
-                    max={projectMax}
-                    value={r.end}
-                    onChange={(e) => updateSettlementRange(idx, "end", e.target.value)}
-                    className="input min-h-[48px] min-w-[200px] px-4 py-3 text-base text-[var(--text)]"
-                  />
-                </div>
-                {idx === settlementRanges.length - 1 && (
-                  <button
-                    type="button"
-                    onClick={addSettlementRange}
-                    className="btn btn-relief shrink-0 px-4 py-2.5 text-sm"
-                  >
-                    구간 추가
-                  </button>
-                )}
-                {settlementRanges.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeSettlementRange(idx)}
-                    className="shrink-0 text-sm font-semibold text-red-600 hover:underline"
-                  >
-                    삭제
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-          {settlementPeriodLabel && (
-            <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[#EEF2FF] px-5 py-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">정산 반영 일자</p>
-              <p className="mt-2 text-xl font-bold leading-snug text-[var(--text)] sm:text-2xl">
-                {settlementPeriodLabel}
-                <span className="ml-2 text-lg font-semibold text-[var(--text-muted)] sm:text-xl">
-                  (총 {settlementDatesSorted.length}일)
-                </span>
+        {settlementEditorOpen && (
+          <div className="report-paper mb-8 p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-[var(--text)]">정산 기간</p>
+              <button type="button" onClick={resetSettlementRanges} className="btn btn-relief shrink-0 px-4 py-2.5 text-sm">
+                전체 행사 기간
+              </button>
+            </div>
+            <div className="mt-3 rounded-xl border border-[var(--border)] bg-[#F8FAFC] px-4 py-3">
+              <p className="text-xs font-semibold text-[var(--text-muted)]">정산 반영 일자</p>
+              <p className="mt-1 text-base font-semibold text-[var(--text)]">
+                {isSettlementSameAsUsage ? "사용 일자와 동일" : settlementLabelCompact}
               </p>
             </div>
-          )}
-        </div>
+            <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm font-medium text-[var(--text)]">
+              <input
+                type="checkbox"
+                checked={includeWeekendsInSettlement}
+                onChange={(e) => setIncludeWeekendsInSettlement(e.target.checked)}
+                className="h-4 w-4 rounded border-[var(--border)] accent-[var(--primary)]"
+              />
+              주말 포함
+            </label>
+            <div className="mt-4 space-y-4">
+              {settlementRanges.map((r, idx) => (
+                <div key={`settle-${idx}`} className="flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-semibold text-[var(--text)]">시작</label>
+                    <input
+                      type="date"
+                      min={projectMin}
+                      max={projectMax}
+                      value={r.start}
+                      onChange={(e) => updateSettlementRange(idx, "start", e.target.value)}
+                      className="input min-h-[48px] min-w-[200px] px-4 py-3 text-base text-[var(--text)]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-semibold text-[var(--text)]">종료</label>
+                    <input
+                      type="date"
+                      min={projectMin}
+                      max={projectMax}
+                      value={r.end}
+                      onChange={(e) => updateSettlementRange(idx, "end", e.target.value)}
+                      className="input min-h-[48px] min-w-[200px] px-4 py-3 text-base text-[var(--text)]"
+                    />
+                  </div>
+                  {idx === settlementRanges.length - 1 && (
+                    <button
+                      type="button"
+                      onClick={addSettlementRange}
+                      className="btn btn-relief shrink-0 px-4 py-2.5 text-sm"
+                    >
+                      구간 추가
+                    </button>
+                  )}
+                  {settlementRanges.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeSettlementRange(idx)}
+                      className="shrink-0 text-sm font-semibold text-red-600 hover:underline"
+                    >
+                      삭제
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
-        <div className="card-raise mb-8 overflow-hidden p-0">
-          <div className="flex items-center justify-between border-b border-[var(--border)] px-6 py-4">
+        <div className="report-paper mb-8 overflow-hidden p-0">
+          <div className="flex items-center justify-between border-b border-[var(--border)] px-8 py-5">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
               <Calculator className="h-4 w-4 text-[var(--text-muted)]" />
               일자별 발급 수량 및 정산 금액 (무료 건 제외)
             </h3>
           </div>
-          <table className="w-full text-left text-sm">
+          <table className="report-table report-table-compact text-left text-sm">
             <thead>
               <tr className="text-[var(--text-muted)]">
-                <th className="px-6 py-4 font-medium text-[var(--text)]">일자</th>
-                <th className="px-4 py-4 text-center font-medium text-[var(--text)]">종일권</th>
-                <th className="px-4 py-4 text-center font-medium text-[var(--text)]">2시간</th>
-                <th className="px-4 py-4 text-center font-medium text-[var(--text)]">1시간</th>
-                <th className="px-4 py-4 text-center font-medium text-[var(--text)]">30분</th>
-                <th className="px-6 py-4 text-right font-medium text-[var(--text)]">일자 합계</th>
+                <th className="font-medium text-[var(--text)]">일자</th>
+                <th className="text-center font-medium text-[var(--text)]">종일권</th>
+                <th className="text-center font-medium text-[var(--text)]">2시간</th>
+                <th className="text-center font-medium text-[var(--text)]">1시간</th>
+                <th className="text-center font-medium text-[var(--text)]">30분</th>
+                <th className="text-right font-medium text-[var(--text)]">일자 합계</th>
               </tr>
             </thead>
             <tbody>
               {daySummaries.map((row) => (
                 <tr key={row.date} className="table-row-hover">
-                  <td className="px-6 py-4 text-[var(--text-muted)]">{monthDay(row.date)}</td>
-                  <td className="px-4 py-4 text-center text-[var(--text-muted)]">{row.all_day_cnt}매</td>
-                  <td className="px-4 py-4 text-center text-[var(--text-muted)]">{row["2h_cnt"]}매</td>
-                  <td className="px-4 py-4 text-center text-[var(--text-muted)]">{row["1h_cnt"]}매</td>
-                  <td className="px-4 py-4 text-center text-[var(--text-muted)]">{row["30m_cnt"]}매</td>
-                  <td className="px-6 py-4 text-right text-[var(--text)]">{row.amount.toLocaleString()}원</td>
+                  <td className="text-[var(--text-muted)]">{monthDay(row.date)}</td>
+                  <td className="text-center text-[var(--text-muted)]">{row.all_day_cnt}매</td>
+                  <td className="text-center text-[var(--text-muted)]">{row["2h_cnt"]}매</td>
+                  <td className="text-center text-[var(--text-muted)]">{row["1h_cnt"]}매</td>
+                  <td className="text-center text-[var(--text-muted)]">{row["30m_cnt"]}매</td>
+                  <td className="text-right text-[var(--text)]">{row.amount.toLocaleString()}원</td>
                 </tr>
               ))}
-              <tr className="border-t border-[var(--border)]">
-                <td className="px-6 py-5 font-semibold text-[var(--text)]">합계</td>
-                <td className="px-4 py-5 text-center font-semibold text-[var(--text)]">{totals.all_day_cnt}매</td>
-                <td className="px-4 py-5 text-center font-semibold text-[var(--text)]">{totals["2h_cnt"]}매</td>
-                <td className="px-4 py-5 text-center font-semibold text-[var(--text)]">{totals["1h_cnt"]}매</td>
-                <td className="px-4 py-5 text-center font-semibold text-[var(--text)]">{totals["30m_cnt"]}매</td>
-                <td className="px-6 py-5 text-right text-3xl font-bold text-emboss">{totals.amount.toLocaleString()}원</td>
+              <tr>
+                <td className="font-semibold text-[var(--text)]">합계</td>
+                <td className="text-center font-semibold text-[var(--text)]">{totals.all_day_cnt}매</td>
+                <td className="text-center font-semibold text-[var(--text)]">{totals["2h_cnt"]}매</td>
+                <td className="text-center font-semibold text-[var(--text)]">{totals["1h_cnt"]}매</td>
+                <td className="text-center font-semibold text-[var(--text)]">{totals["30m_cnt"]}매</td>
+                <td className="text-right text-3xl font-extrabold text-emboss">{totals.amount.toLocaleString()}원</td>
               </tr>
             </tbody>
           </table>
-          <p className="px-6 pb-4 pt-2 text-sm font-semibold text-red-600">
+          <p className="px-8 pb-5 pt-2 text-sm font-semibold text-red-600">
             ※ 위 수량 및 금액은 아래 무료 적용 차량(1일 1대 최상위 금액) 건을 제외한 기준입니다.
           </p>
         </div>
@@ -568,7 +614,7 @@ export default function SettlementPageClient() {
           </p>
         </div>
 
-        <div className="mt-8 card-raise overflow-hidden p-0">
+        <div className="mt-8 rounded-2xl border border-[#D7E3F8] bg-[#F7FAFF] p-0">
           <h3 className="flex items-center gap-2 border-b border-[var(--border)] px-6 py-4 text-sm font-semibold text-[var(--text)]">
             <Receipt className="h-4 w-4 text-[var(--text-muted)]" />
             1일 1대 최상위 금액 차량 무료 적용 내역

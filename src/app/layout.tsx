@@ -25,7 +25,7 @@ export default function RootLayout({
   const baseBodyStyle: CSSProperties = {
     backgroundColor: "#F8FAFC",
     color: "#1E293B",
-    fontFamily: 'system-ui, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif',
+    fontFamily: '"Pretendard", system-ui, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif',
     minHeight: "100vh",
   };
 

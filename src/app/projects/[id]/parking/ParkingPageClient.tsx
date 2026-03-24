@@ -331,9 +331,9 @@ export default function ParkingPageClient() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-3 rounded-lg bg-[#F1F5FF] px-5 py-4">
+      <main className="mx-auto max-w-7xl px-8 py-10">
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-3 rounded-2xl border border-[#DCE8FF] bg-[#EFF4FF] px-6 py-5">
             <p className="text-lg font-semibold text-[var(--text)]">
               {project.org_name}{" "}
               <span className="text-base font-normal text-[var(--text-muted)]">/ {project.manager}</span>
@@ -383,7 +383,7 @@ export default function ParkingPageClient() {
           차량 4자리 → Enter 시 숫자 칸으로 이동. Tab으로 다음 칸. ↑↓로 수량 증감.
         </p>
 
-        <div className="card card-hover overflow-x-auto p-6">
+        <div className="card card-hover overflow-x-auto p-8">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="text-[var(--text-muted)]">

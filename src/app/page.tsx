@@ -349,7 +349,7 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-[var(--bg)]">
       <header className="border-b border-[var(--border)] bg-white">
-        <div className="mx-auto max-w-6xl px-6 py-5">
+        <div className="mx-auto max-w-7xl px-8 py-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <button
@@ -369,10 +369,10 @@ export default function HomePage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-6 py-8">
+      <main className="mx-auto max-w-7xl px-8 py-10">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold text-[var(--text)]">기관 목록</h2>
+            <h2 className="text-xl font-bold text-[var(--text)]">기관 목록</h2>
             <div className="inline-flex rounded-full bg-[var(--bg)] p-1 text-sm">
               <button
                 type="button"
@@ -408,7 +408,7 @@ export default function HomePage() {
           </Link>
         </div>
 
-        <div className="card mb-8 p-5">
+        <div className="card mb-10 p-6">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               {selectedProject && (
@@ -562,18 +562,18 @@ export default function HomePage() {
             {projectsWithRoom.length > 0 && (
               <div className="card card-hover mb-6 overflow-hidden p-0">
                 <div className="border-b border-[var(--border)] bg-[#F8FAFC] px-6 py-3">
-                  <h3 className="text-sm font-semibold text-[var(--text)]">
+              <h3 className="text-base font-bold text-[var(--text)]">
                     {listMode === "archive"
                       ? `보관함 · ${koreanDateTitle(selectedDate)} 종료 행사 목록`
                       : `${koreanDateTitle(selectedDate)} 행사 목록`}
                   </h3>
                 </div>
-                <ul className="divide-y divide-[var(--border)]">
+                <ul className="space-y-3 p-3">
                   {projectsWithRoom.map((p) => (
                     <li
                       key={p.id}
-                      className={`flex flex-wrap items-center gap-x-6 gap-y-2 px-6 py-4 transition-colors hover:bg-[#F8FAFC] ${
-                        selectedProjectId === p.id ? "bg-[#EFF6FF]" : ""
+                      className={`card flex flex-wrap items-center gap-x-6 gap-y-2 px-6 py-4 transition-colors hover:bg-[#F8FAFC] ${
+                        selectedProjectId === p.id ? "bg-[#EFF6FF] border-[#CFE0FF]" : ""
                       }`}
                       onClick={() => setSelectedProjectId(p.id)}
                       role="button"
