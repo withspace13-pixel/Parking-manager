@@ -2,11 +2,12 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Calculator, Download, Home, Receipt } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
+import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
 import { supabase, TICKET_PRICES } from "@/lib/supabase";
 import type { Project, ParkingRecord } from "@/lib/supabase";
 
@@ -60,31 +61,117 @@ function monthDay(d: string) {
   return `${m}/${day}`;
 }
 
+function isYmd(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(s).trim());
+}
+
+function clampYmd(ymd: string, min: string, max: string): string {
+  const d = ymd.slice(0, 10);
+  if (d < min) return min;
+  if (d > max) return max;
+  return d;
+}
+
+/** 여러 시작~종료 구간의 날짜 합집합(정렬), 행사 기간 [min,max] 안으로 자름 */
+function unionDatesFromRanges(
+  ranges: Array<{ start: string; end: string }>,
+  min: string,
+  max: string
+): string[] {
+  const set = new Set<string>();
+  for (const r of ranges) {
+    const s = clampYmd(String(r.start).trim().slice(0, 10), min, max);
+    const e = clampYmd(String(r.end).trim().slice(0, 10), min, max);
+    if (!isYmd(s) || !isYmd(e) || s > e) continue;
+    getDateRange(s, e).forEach((d) => set.add(d));
+  }
+  return Array.from(set).sort();
+}
+
 export default function SettlementPageClient() {
   const params = useParams();
+  const router = useRouter();
   const projectId = params.id as string;
   const devStore = useDevStore();
 
   const [project, setProject] = useState<Project | null>(null);
   const [records, setRecords] = useState<ParkingRecord[]>([]);
+  const [eventDates, setEventDates] = useState<string[]>([]);
   const pdfExportRef = useRef<HTMLDivElement>(null);
   const [pdfSaving, setPdfSaving] = useState(false);
+  /** 정산에 포함할 기간(행사 start~end 범위 내). 기본은 행사 전체 */
+  const [settlementRanges, setSettlementRanges] = useState<Array<{ start: string; end: string }>>([]);
+  /** 정산 일자 집계 시 주말 포함(기본: 제외) */
+  const [includeWeekendsInSettlement, setIncludeWeekendsInSettlement] = useState(false);
 
-  const dateList = useMemo(
-    () => (project?.start_date && project?.end_date ? getDateRange(project.start_date, project.end_date) : []),
-    [project?.start_date, project?.end_date]
+  const projectMin = eventDates.length > 0 ? eventDates[0] : project ? String(project.start_date).slice(0, 10) : "";
+  const projectMax =
+    eventDates.length > 0 ? eventDates[eventDates.length - 1] : project ? String(project.end_date).slice(0, 10) : "";
+  const eventDateSet = useMemo(() => new Set(eventDates), [eventDates]);
+
+  useEffect(() => {
+    if (!project) return;
+    if (eventDates.length > 0) {
+      const split = datesYmdToConsecutiveRanges(eventDates);
+      setSettlementRanges(split.length > 0 ? split : [{ start: projectMin, end: projectMax }]);
+      return;
+    }
+    if (projectMin && projectMax) {
+      setSettlementRanges([{ start: projectMin, end: projectMax }]);
+    }
+  }, [project?.id, projectMin, projectMax, eventDates]);
+
+  const settlementDatesSorted = useMemo(() => {
+    if (!project || !projectMin || !projectMax) return [];
+    let raw: string[];
+    if (settlementRanges.length === 0) {
+      raw = getDateRange(projectMin, projectMax);
+    } else {
+      raw = unionDatesFromRanges(settlementRanges, projectMin, projectMax);
+    }
+    if (eventDates.length > 0) {
+      raw = raw.filter((d) => eventDateSet.has(d));
+    }
+    if (includeWeekendsInSettlement) return raw;
+    return raw.filter((ymd) => {
+      const [y, m, d] = ymd.split("-").map(Number);
+      const day = new Date(y, m - 1, d).getDay();
+      return day !== 0 && day !== 6;
+    });
+  }, [project, projectMin, projectMax, settlementRanges, includeWeekendsInSettlement, eventDates, eventDateSet]);
+
+  const settlementDateSet = useMemo(() => new Set(settlementDatesSorted), [settlementDatesSorted]);
+
+  const filteredRecords = useMemo(
+    () => records.filter((r) => settlementDateSet.has(String(r.date).slice(0, 10))),
+    [records, settlementDateSet]
   );
 
   useEffect(() => {
     if (isDevMode()) {
       const p = devStore.getProject(projectId);
       if (p) setProject(p);
+      const roomDates = (devStore.getRooms(projectId) ?? [])
+        .map((r) => String(r.date).slice(0, 10))
+        .filter(isYmd)
+        .sort();
+      setEventDates(Array.from(new Set(roomDates)));
       setRecords(devStore.getParkingRecords(projectId));
       return;
     }
     (async () => {
       const { data: p } = await supabase.from("projects").select("*").eq("id", projectId).single();
       if (p) setProject(p as Project);
+      const { data: rooms } = await supabase
+        .from("project_rooms")
+        .select("date")
+        .eq("project_id", projectId)
+        .order("date");
+      const roomDates = (rooms || [])
+        .map((r: { date: string }) => String(r.date).slice(0, 10))
+        .filter(isYmd)
+        .sort();
+      setEventDates(Array.from(new Set(roomDates)));
       const { data: recs } = await supabase
         .from("parking_records")
         .select("*")
@@ -94,9 +181,21 @@ export default function SettlementPageClient() {
       setRecords((recs || []) as ParkingRecord[]);
     })();
   }, [projectId, devStore.data]);
+  const eventPeriodLabel = useMemo(() => {
+    if (eventDates.length === 0) {
+      if (!project) return "";
+      return project.start_date === project.end_date
+        ? shortDate(project.start_date)
+        : `${shortDate(project.start_date)} ~ ${shortDate(project.end_date)}`;
+    }
+    return datesYmdToConsecutiveRanges(eventDates)
+      .map((r) => (r.start === r.end ? shortDate(r.start) : `${shortDate(r.start)} ~ ${shortDate(r.end)}`))
+      .join(", ");
+  }, [eventDates, project]);
+
 
   const { dayFreeList, daySummaries, totals } = useMemo(() => {
-    if (!dateList.length || !records.length) {
+    if (!settlementDatesSorted.length || !filteredRecords.length) {
       return {
         dayFreeList: [] as DayFree[],
         daySummaries: [] as DaySummary[],
@@ -105,7 +204,7 @@ export default function SettlementPageClient() {
     }
 
     const byDate = new Map<string, ParkingRecord[]>();
-    for (const r of records) {
+    for (const r of filteredRecords) {
       const list = byDate.get(r.date) ?? [];
       list.push(r);
       byDate.set(r.date, list);
@@ -119,7 +218,7 @@ export default function SettlementPageClient() {
     let total1h = 0;
     let total30m = 0;
 
-    for (const date of dateList) {
+    for (const date of settlementDatesSorted) {
       const dayRecs = byDate.get(date) ?? [];
       if (dayRecs.length === 0) continue;
 
@@ -158,14 +257,14 @@ export default function SettlementPageClient() {
       daySummaries: summaries,
       totals: { all_day_cnt: totalAllDay, "2h_cnt": total2h, "1h_cnt": total1h, "30m_cnt": total30m, amount: totalAmount },
     };
-  }, [dateList, records]);
+  }, [settlementDatesSorted, filteredRecords]);
 
   const sortedRecords = useMemo(
     () =>
-      records
+      filteredRecords
         .slice()
         .sort((a, b) => (a.date === b.date ? a.vehicle_num.localeCompare(b.vehicle_num) : a.date.localeCompare(b.date))),
-    [records]
+    [filteredRecords]
   );
 
   const freeKeySet = useMemo(() => new Set(dayFreeList.map((f) => `${f.date}-${f.vehicle_num}`)), [dayFreeList]);
@@ -186,6 +285,41 @@ export default function SettlementPageClient() {
       { all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0, amount: 0 }
     );
   }, [sortedRecords, freeKeySet]);
+
+  const settlementPeriodLabel = useMemo(() => {
+    if (!settlementDatesSorted.length) return "";
+    return datesYmdToConsecutiveRanges(settlementDatesSorted)
+      .map((r) => (r.start === r.end ? monthDay(r.start) : `${monthDay(r.start)} ~ ${monthDay(r.end)}`))
+      .join(", ");
+  }, [settlementDatesSorted]);
+
+  const updateSettlementRange = (idx: number, key: "start" | "end", value: string) => {
+    const v = value.slice(0, 10);
+    setSettlementRanges((prev) => {
+      const next = prev.map((r, i) => (i === idx ? { ...r, [key]: v } : r));
+      return next.map((r) => {
+        let s = clampYmd(String(r.start).slice(0, 10), projectMin, projectMax);
+        let e = clampYmd(String(r.end).slice(0, 10), projectMin, projectMax);
+        if (s > e) e = s;
+        return { start: s, end: e };
+      });
+    });
+  };
+
+  const addSettlementRange = () => {
+    setSettlementRanges((prev) => [...prev, { start: projectMin, end: projectMin }]);
+  };
+
+  const removeSettlementRange = (idx: number) => {
+    setSettlementRanges((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      return next.length > 0 ? next : [{ start: projectMin, end: projectMax }];
+    });
+  };
+
+  const resetSettlementRanges = () => {
+    setSettlementRanges([{ start: projectMin, end: projectMax }]);
+  };
 
   const handlePdfDownload = async () => {
     if (!pdfExportRef.current || !project) return;
@@ -220,9 +354,7 @@ export default function SettlementPageClient() {
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  window.location.href = "/";
-                }}
+                onClick={() => router.push("/")}
                 className="inline-flex items-center justify-center rounded-full border border-[var(--border)] bg-white p-2 text-[var(--text-muted)] shadow-sm hover:bg-[var(--bg)] hover:text-[var(--text)]"
                 aria-label="홈으로"
               >
@@ -257,10 +389,83 @@ export default function SettlementPageClient() {
             </div>
           </div>
           <p className="mt-4 text-base font-semibold text-[var(--text)]">
-            사용 일자: {project.start_date === project.end_date
-              ? shortDate(project.start_date)
-              : `${shortDate(project.start_date)} ~ ${shortDate(project.end_date)}`}
+            사용 일자: {eventPeriodLabel}
           </p>
+        </div>
+
+        <div className="card mb-8 p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-[var(--text)]">정산 기간</p>
+            <button type="button" onClick={resetSettlementRanges} className="btn btn-relief shrink-0 px-4 py-2.5 text-sm">
+              전체 행사 기간
+            </button>
+          </div>
+          <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm font-medium text-[var(--text)]">
+            <input
+              type="checkbox"
+              checked={includeWeekendsInSettlement}
+              onChange={(e) => setIncludeWeekendsInSettlement(e.target.checked)}
+              className="h-4 w-4 rounded border-[var(--border)] accent-[var(--primary)]"
+            />
+            주말 포함
+          </label>
+          <div className="mt-4 space-y-4">
+            {settlementRanges.map((r, idx) => (
+              <div key={`settle-${idx}`} className="flex flex-wrap items-end gap-3">
+                <div>
+                  <label className="mb-1.5 block text-sm font-semibold text-[var(--text)]">시작</label>
+                  <input
+                    type="date"
+                    min={projectMin}
+                    max={projectMax}
+                    value={r.start}
+                    onChange={(e) => updateSettlementRange(idx, "start", e.target.value)}
+                    className="input min-h-[48px] min-w-[200px] px-4 py-3 text-base text-[var(--text)]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-semibold text-[var(--text)]">종료</label>
+                  <input
+                    type="date"
+                    min={projectMin}
+                    max={projectMax}
+                    value={r.end}
+                    onChange={(e) => updateSettlementRange(idx, "end", e.target.value)}
+                    className="input min-h-[48px] min-w-[200px] px-4 py-3 text-base text-[var(--text)]"
+                  />
+                </div>
+                {idx === settlementRanges.length - 1 && (
+                  <button
+                    type="button"
+                    onClick={addSettlementRange}
+                    className="btn btn-relief shrink-0 px-4 py-2.5 text-sm"
+                  >
+                    구간 추가
+                  </button>
+                )}
+                {settlementRanges.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeSettlementRange(idx)}
+                    className="shrink-0 text-sm font-semibold text-red-600 hover:underline"
+                  >
+                    삭제
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          {settlementPeriodLabel && (
+            <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[#EEF2FF] px-5 py-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">정산 반영 일자</p>
+              <p className="mt-2 text-xl font-bold leading-snug text-[var(--text)] sm:text-2xl">
+                {settlementPeriodLabel}
+                <span className="ml-2 text-lg font-semibold text-[var(--text-muted)] sm:text-xl">
+                  (총 {settlementDatesSorted.length}일)
+                </span>
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="card-raise mb-8 overflow-hidden p-0">
@@ -312,7 +517,7 @@ export default function SettlementPageClient() {
             <div>
               <p className="text-sm font-semibold text-[var(--text)]">전체 발급 내역 (차량 · 일자별)</p>
               <p className="mt-1 text-xs text-[var(--text-muted)]">
-                총 {records.length.toLocaleString()}건 · 일자/차량 순으로 정렬된 상세 발급 내역입니다.
+                총 {filteredRecords.length.toLocaleString()}건 · 위 정산 기간에 포함된 일자만 · 일자/차량 순으로 정렬된 상세 발급 내역입니다.
               </p>
             </div>
           </div>
@@ -388,10 +593,10 @@ export default function SettlementPageClient() {
         </div>
 
         <div className="mt-8 flex flex-wrap gap-3">
-          <button type="button" onClick={() => (window.location.href = `/projects/${projectId}/parking`)} className="btn btn-primary inline-flex items-center gap-2 px-5 py-2.5 text-sm">
+          <button type="button" onClick={() => router.push(`/projects/${projectId}/parking`)} className="btn btn-primary inline-flex items-center gap-2 px-5 py-2.5 text-sm">
             주차권 등록
           </button>
-          <button type="button" onClick={() => (window.location.href = "/")} className="btn inline-flex items-center gap-2 px-5 py-2.5 text-sm">
+          <button type="button" onClick={() => router.push("/")} className="btn inline-flex items-center gap-2 px-5 py-2.5 text-sm">
             <ArrowLeft className="h-4 w-4" />
             목록
           </button>

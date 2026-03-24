@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Calculator, Home, Plus, Trash2 } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
@@ -39,6 +39,7 @@ const TICKET_LABELS: Record<string, string> = {
 
 export default function ParkingPageClient() {
   const params = useParams();
+  const router = useRouter();
   const projectId = params.id as string;
   const devStore = useDevStore();
   const [project, setProject] = useState<Project | null>(null);
@@ -318,9 +319,7 @@ export default function ParkingPageClient() {
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  window.location.href = "/";
-                }}
+                onClick={() => router.push("/")}
                 className="inline-flex items-center justify-center rounded-full border border-[var(--border)] bg-white p-2 text-[var(--text-muted)] shadow-sm hover:bg-[var(--bg)] hover:text-[var(--text)]"
                 aria-label="홈으로"
               >

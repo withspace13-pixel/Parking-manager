@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Copy, Home, Save, X } from "lucide-react";
-import { isDevMode, setForceDevMode } from "@/lib/dev-mode";
+import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
-import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
+import { datesYmdToConsecutiveRanges, splitCalendarSpanToWeekdayRanges } from "@/lib/schedule-dates";
 
 /** YYYY-MM-DD 형식인지 확인 */
 function isDateStr(s: string): boolean {
@@ -127,7 +127,18 @@ export default function NewProjectPage() {
   };
 
   const updateRange = (idx: number, key: "start" | "end", value: string) => {
-    setRanges((prev) => prev.map((r, i) => (i === idx ? { ...r, [key]: value.slice(0, 10) } : r)));
+    const v = value.slice(0, 10);
+    setRanges((prev) => {
+      const next = prev.map((r, i) => (i === idx ? { ...r, [key]: v } : r));
+      /** 주말 제외 + 일정이 1구간일 때: 긴 기간을 평일 연속 구간으로 자동 분할 (예: 3/24~3/31 → 3/24~27, 3/30~31) */
+      if (idx !== 0 || prev.length !== 1 || includeWeekends) return next;
+      const r0 = next[0];
+      if (!isDateStr(r0.start) || !isDateStr(r0.end) || r0.start > r0.end) return next;
+      const split = splitCalendarSpanToWeekdayRanges(r0.start, r0.end);
+      if (split.length === 0) return next;
+      if (split.length > 1) return split;
+      return [split[0]];
+    });
   };
 
   const applyRoomsToAll = () => {
@@ -202,7 +213,8 @@ export default function NewProjectPage() {
           },
           roomList
         );
-        window.location.href = "/";
+        router.push("/");
+        router.refresh();
         return;
       }
 
@@ -234,7 +246,8 @@ export default function NewProjectPage() {
         if (roomsError) throw roomsError;
       }
 
-      window.location.href = "/";
+      router.push("/");
+      router.refresh();
     } catch (err: unknown) {
       const message =
         err instanceof Error
@@ -277,16 +290,6 @@ export default function NewProjectPage() {
               개발자 모드 — 브라우저에 저장되며 등록 후 대시보드로 이동합니다.
             </span>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              setForceDevMode(true);
-              window.location.reload();
-            }}
-            className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
-          >
-            {isDevMode() ? "로컬 저장 모드 유지 (새로고침)" : "Supabase 없이 테스트하기 (로컬 저장)"}
-          </button>
         </div>
 
         <form
@@ -399,7 +402,10 @@ export default function NewProjectPage() {
 
               {rangesLabel && (
                 <div className="sm:col-span-2 mt-1 rounded-xl border border-[var(--border)] bg-[#F8FAFC] px-4 py-3">
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div
+                    className="flex flex-wrap items-center gap-2"
+                    style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem" }}
+                  >
                     <span className="text-sm font-semibold text-[var(--text)]">선택된 기간</span>
                     <span
                       className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${
@@ -410,7 +416,10 @@ export default function NewProjectPage() {
                     >
                       {includeWeekends ? "주말 포함" : "주말 제외"}
                     </span>
-                    <span className="ml-auto rounded-full bg-amber-50 px-2.5 py-1 text-sm font-bold text-amber-700">
+                    <span
+                      className="ml-auto rounded-full bg-amber-50 px-2.5 py-1 text-sm font-bold text-amber-700"
+                      style={{ marginLeft: "auto" }}
+                    >
                       총 {dateList.length}일 사용
                     </span>
                   </div>
@@ -447,8 +456,14 @@ export default function NewProjectPage() {
 
           {dateList.length > 0 && (
             <div className="card card-hover p-6">
-              <div className="mb-4 flex items-center justify-between">
-                <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
+              <div
+                className="mb-4 flex items-center justify-between"
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+              >
+                <h3
+                  className="flex items-center gap-2 text-sm font-semibold text-[var(--text)]"
+                  style={{ display: "flex", alignItems: "center", gap: "0.5rem", margin: 0 }}
+                >
                   날짜별 사용 룸 ({dateList.length}일)
                   <span
                     className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${
@@ -464,7 +479,22 @@ export default function NewProjectPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      setIncludeWeekends((v) => !v);
+                      setIncludeWeekends((prev) => {
+                        const next = !prev;
+                        if (!next && prev) {
+                          setRanges((ranges) => {
+                            if (ranges.length !== 1) return ranges;
+                            const r0 = ranges[0];
+                            const s = String(r0.start ?? "").trim().slice(0, 10);
+                            const e = String(r0.end ?? "").trim().slice(0, 10);
+                            if (!isDateStr(s) || !isDateStr(e) || s > e) return ranges;
+                            const split = splitCalendarSpanToWeekdayRanges(s, e);
+                            if (split.length > 1) return split;
+                            return ranges;
+                          });
+                        }
+                        return next;
+                      });
                       setError("");
                     }}
                     className={`btn inline-flex items-center gap-2 px-4 py-2 text-sm rounded-xl ${

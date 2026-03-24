@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Copy, Home, Save, X } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
 import type { Project } from "@/lib/supabase";
-import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
+import { datesYmdToConsecutiveRanges, splitCalendarSpanToWeekdayRanges } from "@/lib/schedule-dates";
 
 /** YYYY-MM-DD 형식인지 확인 */
 function isDateStr(s: string): boolean {
@@ -54,6 +54,7 @@ type ScheduleRange = { start: string; end: string };
 
 export default function EditProjectForm() {
   const params = useParams();
+  const router = useRouter();
   const rawId = params?.id;
   const projectId = (Array.isArray(rawId) ? rawId[0] : rawId) ?? "";
   const devStore = useDevStore();
@@ -204,9 +205,17 @@ export default function EditProjectForm() {
   };
 
   const updateRange = (idx: number, key: "start" | "end", value: string) => {
+    const v = value.slice(0, 10);
     setRanges((prev) => {
       const list = Array.isArray(prev) ? prev : [{ start: "", end: "" }];
-      return list.map((r, i) => (i === idx ? { ...r, [key]: value.slice(0, 10) } : r));
+      const next = list.map((r, i) => (i === idx ? { ...r, [key]: v } : r));
+      if (idx !== 0 || list.length !== 1 || includeWeekends) return next;
+      const r0 = next[0];
+      if (!isDateStr(r0.start) || !isDateStr(r0.end) || r0.start > r0.end) return next;
+      const split = splitCalendarSpanToWeekdayRanges(r0.start, r0.end);
+      if (split.length === 0) return next;
+      if (split.length > 1) return split;
+      return [split[0]];
     });
   };
 
@@ -278,8 +287,8 @@ export default function EditProjectForm() {
           remarks: String(remarks ?? "").trim() || null,
         });
         devStore.saveRooms(projectId, roomList);
-        // SPA 이동+refresh는 dev에서 .next 청크 불일치(Cannot find module './xxx.js')를 유발할 수 있어 전체 이동
-        window.location.href = "/";
+        router.push("/");
+        router.refresh();
         return;
       }
 
@@ -308,7 +317,8 @@ export default function EditProjectForm() {
         if (roomsError) throw roomsError;
       }
 
-      window.location.href = "/";
+      router.push("/");
+      router.refresh();
     } catch (err: unknown) {
       const msg =
         err instanceof Error
@@ -534,7 +544,23 @@ export default function EditProjectForm() {
                   <button
                     type="button"
                     onClick={() => {
-                      setIncludeWeekends((v) => !v);
+                      setIncludeWeekends((prev) => {
+                        const next = !prev;
+                        if (!next && prev) {
+                          setRanges((ranges) => {
+                            const list = Array.isArray(ranges) ? ranges : [{ start: "", end: "" }];
+                            if (list.length !== 1) return list;
+                            const r0 = list[0];
+                            const s = String(r0.start ?? "").trim().slice(0, 10);
+                            const e = String(r0.end ?? "").trim().slice(0, 10);
+                            if (!isDateStr(s) || !isDateStr(e) || s > e) return list;
+                            const split = splitCalendarSpanToWeekdayRanges(s, e);
+                            if (split.length > 1) return split;
+                            return list;
+                          });
+                        }
+                        return next;
+                      });
                       setError("");
                     }}
                     className={`btn inline-flex items-center gap-2 px-4 py-2 text-sm rounded-xl ${includeWeekends ? "btn-primary" : "btn-relief"}`}

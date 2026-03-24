@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   PlusCircle,
@@ -52,6 +53,7 @@ function koreanDateTitle(d: string) {
 type ProjectWithRoom = Project & { roomName: string };
 
 export default function HomePage() {
+  const router = useRouter();
   const [today] = useState(() => todayString());
   const [listMode, setListMode] = useState<"active" | "archive">("active");
   const [supportFilter, setSupportFilter] = useState<"all" | "onlySupport" | "onlyNoSupport">("all");
@@ -352,9 +354,7 @@ export default function HomePage() {
             <div className="flex items-center gap-4">
               <button
                 type="button"
-                onClick={() => {
-                  window.location.href = "/";
-                }}
+                onClick={() => router.push("/")}
                 className="inline-flex items-center justify-center rounded-full border border-[var(--border)] bg-white p-2 text-[var(--text-muted)] shadow-sm hover:bg-[var(--bg)] hover:text-[var(--text)]"
                 aria-label="홈으로"
               >

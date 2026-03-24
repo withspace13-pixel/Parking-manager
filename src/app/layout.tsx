@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { CSSProperties } from "react";
 import { Nunito } from "next/font/google";
 import "./globals.css";
+import { DevCssHealthCheck } from "@/components/DevCssHealthCheck";
 import { DevModeWrapper } from "@/components/DevModeWrapper";
 
 const nunito = Nunito({
@@ -31,6 +32,7 @@ export default function RootLayout({
   return (
     <html lang="ko" className={nunito.variable}>
       <body className="min-h-screen font-sans antialiased" style={baseBodyStyle}>
+        <DevCssHealthCheck />
         <DevModeWrapper>{children}</DevModeWrapper>
       </body>
     </html>

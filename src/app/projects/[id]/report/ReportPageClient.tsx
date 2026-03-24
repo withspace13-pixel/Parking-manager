@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Calculator, Download, Home, Receipt } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
@@ -62,6 +62,7 @@ function monthDay(d: string) {
 /** 보관함 보고서 화면 — 정산 페이지와 동일 레이아웃·계산 로직 */
 export default function ReportPageClient() {
   const params = useParams();
+  const router = useRouter();
   const projectId = params.id as string;
   const devStore = useDevStore();
 
@@ -220,9 +221,7 @@ export default function ReportPageClient() {
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  window.location.href = "/";
-                }}
+                onClick={() => router.push("/")}
                 className="inline-flex items-center justify-center rounded-full border border-[var(--border)] bg-white p-2 text-[var(--text-muted)] shadow-sm hover:bg-[var(--bg)] hover:text-[var(--text)]"
                 aria-label="홈으로"
               >
@@ -394,12 +393,12 @@ export default function ReportPageClient() {
         <div className="mt-8 flex flex-wrap gap-3">
           <button
             type="button"
-            onClick={() => (window.location.href = `/projects/${projectId}/parking`)}
+            onClick={() => router.push(`/projects/${projectId}/parking`)}
             className="btn btn-primary inline-flex items-center gap-2 px-5 py-2.5 text-sm"
           >
             주차권 등록
           </button>
-          <button type="button" onClick={() => (window.location.href = "/")} className="btn inline-flex items-center gap-2 px-5 py-2.5 text-sm">
+          <button type="button" onClick={() => router.push("/")} className="btn inline-flex items-center gap-2 px-5 py-2.5 text-sm">
             <ArrowLeft className="h-4 w-4" />
             목록
           </button>

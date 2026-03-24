@@ -1,3 +1,30 @@
+function isYmd(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(s).trim());
+}
+
+/**
+ * 캘린더 시작~종료 사이의 평일만 모아 연속 구간 { start, end }[] 로 분할 (주말 제외 UI용).
+ * 예: 2026-03-24 ~ 2026-03-31 → [{ 24~27 }, { 30~31 }]
+ */
+export function splitCalendarSpanToWeekdayRanges(start: string, end: string): { start: string; end: string }[] {
+  const s = String(start).trim().slice(0, 10);
+  const e = String(end).trim().slice(0, 10);
+  if (!isYmd(s) || !isYmd(e) || s > e) return [];
+  const weekdays: string[] = [];
+  const [sy, sm, sd] = s.split("-").map(Number);
+  for (let i = 0; i < 366; i++) {
+    const d = new Date(sy, sm - 1, sd + i);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const str = `${y}-${m}-${day}`;
+    if (str > e) break;
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) weekdays.push(str);
+  }
+  return datesYmdToConsecutiveRanges(weekdays);
+}
+
 /** YYYY-MM-DD 목록을 캘린더상 연속 구간 { start, end }[] 로 묶음 (하루 건너뛰면 구간 분리) */
 export function datesYmdToConsecutiveRanges(dates: string[]): { start: string; end: string }[] {
   const sorted = Array.from(new Set(dates.map((d) => String(d).slice(0, 10)))).sort();
