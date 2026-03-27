@@ -60,6 +60,7 @@ export function ParkingSection({ projectId, date, project }: Props) {
       const vehicle = String(row.vehicle_num).trim().slice(0, 4);
       if (!vehicle) return;
       const saved = devStore.upsertParkingRecord({
+        id: row.recordId,
         project_id: projectId,
         vehicle_num: vehicle,
         date: row.date,

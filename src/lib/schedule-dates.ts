@@ -2,6 +2,35 @@ function isYmd(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(s).trim());
 }
 
+function isWeekdayYmd(ymd: string): boolean {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dow = new Date(y, m - 1, d).getDay();
+  return dow !== 0 && dow !== 6;
+}
+
+/**
+ * 선택된 날짜가 "하나의 연속 캘린더 구간에서 주말만 빠진 형태"인지 확인.
+ * true면 표시를 여러 구간으로 쪼개지 않고 start~end 1구간으로 보여준다.
+ */
+function isSingleWeekdaySpan(sortedDates: string[]): boolean {
+  if (sortedDates.length < 2) return false;
+  const uniqueSorted = Array.from(new Set(sortedDates.map((d) => String(d).slice(0, 10)))).sort();
+  const start = uniqueSorted[0]!;
+  const end = uniqueSorted[uniqueSorted.length - 1]!;
+  const set = new Set(uniqueSorted);
+  const [sy, sm, sd] = start.split("-").map(Number);
+  for (let i = 0; i < 366; i++) {
+    const d = new Date(sy, sm - 1, sd + i);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const cur = `${y}-${m}-${day}`;
+    if (cur > end) break;
+    if (isWeekdayYmd(cur) && !set.has(cur)) return false;
+  }
+  return true;
+}
+
 /**
  * 캘린더 시작~종료 사이의 평일만 모아 연속 구간 { start, end }[] 로 분할 (주말 제외 UI용).
  * 예: 2026-03-24 ~ 2026-03-31 → [{ 24~27 }, { 30~31 }]
@@ -69,6 +98,11 @@ export function shortYmdSlice(ymd: string): string {
 /** 정렬된 YYYY-MM-DD 목록 → "3/18 ~ 3/25, 3/27 ~ 3/30" 형태 */
 export function periodLabelMonthDayFromSortedYmd(sortedDates: string[]): string {
   if (sortedDates.length === 0) return "";
+  if (isSingleWeekdaySpan(sortedDates)) {
+    const start = sortedDates[0]!;
+    const end = sortedDates[sortedDates.length - 1]!;
+    return start === end ? formatMonthDaySlash(start) : `${formatMonthDaySlash(start)} ~ ${formatMonthDaySlash(end)}`;
+  }
   const ranges = datesYmdToConsecutiveRanges(sortedDates);
   return ranges
     .map((r) =>
@@ -82,6 +116,11 @@ export function periodLabelMonthDayFromSortedYmd(sortedDates: string[]): string 
 /** 정렬된 YYYY-MM-DD 목록 → "26-03-18 ~ 26-03-25, ..." 형태 */
 export function periodLabelShortYmdFromSortedYmd(sortedDates: string[]): string {
   if (sortedDates.length === 0) return "";
+  if (isSingleWeekdaySpan(sortedDates)) {
+    const start = sortedDates[0]!;
+    const end = sortedDates[sortedDates.length - 1]!;
+    return start === end ? shortYmdSlice(start) : `${shortYmdSlice(start)} ~ ${shortYmdSlice(end)}`;
+  }
   const ranges = datesYmdToConsecutiveRanges(sortedDates);
   return ranges
     .map((r) =>
@@ -95,6 +134,11 @@ export function periodLabelShortYmdFromSortedYmd(sortedDates: string[]): string 
 /** 정렬된 YYYY-MM-DD 목록 → "2026-03-18 ~ 2026-03-25, ..." (테이블용) */
 export function periodLabelIsoFromSortedYmd(sortedDates: string[]): string {
   if (sortedDates.length === 0) return "";
+  if (isSingleWeekdaySpan(sortedDates)) {
+    const start = sortedDates[0]!;
+    const end = sortedDates[sortedDates.length - 1]!;
+    return start === end ? start : `${start} ~ ${end}`;
+  }
   const ranges = datesYmdToConsecutiveRanges(sortedDates);
   return ranges.map((r) => (r.start === r.end ? r.start : `${r.start} ~ ${r.end}`)).join(", ");
 }

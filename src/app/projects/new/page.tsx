@@ -7,7 +7,7 @@ import { ArrowLeft, Copy, Home, Save, X } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
-import { datesYmdToConsecutiveRanges, splitCalendarSpanToWeekdayRanges } from "@/lib/schedule-dates";
+import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
 
 /** YYYY-MM-DD 형식인지 확인 */
 function isDateStr(s: string): boolean {
@@ -53,6 +53,7 @@ export default function NewProjectPage() {
   type ScheduleRange = { start: string; end: string };
   const [org_name, setOrgName] = useState("");
   const [manager, setManager] = useState("");
+  const [event_name, setEventName] = useState("");
   const [ranges, setRanges] = useState<ScheduleRange[]>(() => {
     const t = todayString();
     return [{ start: t, end: t }];
@@ -91,26 +92,8 @@ export default function NewProjectPage() {
   })();
 
   const rangesLabel = (() => {
-    // 실제 생성된 날짜(dateList)를 연속 구간으로 묶어 표시 (주말 제외/띄엄띄엄 일정 반영)
-    if (dateList.length === 0) return "";
-    const ranges: Array<{ start: string; end: string }> = [];
-    const toTime = (ymd: string) => {
-      const [y, m, d] = ymd.split("-").map(Number);
-      return new Date(y, m - 1, d).getTime();
-    };
-    let curStart = dateList[0];
-    let prev = dateList[0];
-    for (let i = 1; i < dateList.length; i++) {
-      const next = dateList[i];
-      const isConsecutive = toTime(next) - toTime(prev) === 24 * 60 * 60 * 1000;
-      if (!isConsecutive) {
-        ranges.push({ start: curStart, end: prev });
-        curStart = next;
-      }
-      prev = next;
-    }
-    ranges.push({ start: curStart, end: prev });
-    return ranges
+    if (normalizedRanges.length === 0) return "";
+    return normalizedRanges
       .map((r) => (r.start === r.end ? formatMdDow(r.start) : `${formatMdDow(r.start)} ~ ${formatMdDow(r.end)}`))
       .join(", ");
   })();
@@ -130,14 +113,7 @@ export default function NewProjectPage() {
     const v = value.slice(0, 10);
     setRanges((prev) => {
       const next = prev.map((r, i) => (i === idx ? { ...r, [key]: v } : r));
-      /** 주말 제외 + 일정이 1구간일 때: 긴 기간을 평일 연속 구간으로 자동 분할 (예: 3/24~3/31 → 3/24~27, 3/30~31) */
-      if (idx !== 0 || prev.length !== 1 || includeWeekends) return next;
-      const r0 = next[0];
-      if (!isDateStr(r0.start) || !isDateStr(r0.end) || r0.start > r0.end) return next;
-      const split = splitCalendarSpanToWeekdayRanges(r0.start, r0.end);
-      if (split.length === 0) return next;
-      if (split.length > 1) return split;
-      return [split[0]];
+      return next;
     });
   };
 
@@ -179,6 +155,7 @@ export default function NewProjectPage() {
     setError("");
     const name = String(org_name ?? "").trim();
     const mgr = String(manager ?? "").trim();
+    const eventName = String(event_name ?? "").trim();
     if (!name || !mgr) {
       setError("기관명과 담당자명을 입력해 주세요.");
       return;
@@ -206,6 +183,7 @@ export default function NewProjectPage() {
           {
             org_name: name,
             manager: mgr,
+            event_name: eventName || null,
             start_date: sDate,
             end_date: eDate,
             parking_support,
@@ -223,6 +201,7 @@ export default function NewProjectPage() {
         .insert({
           org_name: name,
           manager: mgr,
+          event_name: eventName || null,
           start_date: sDate,
           end_date: eDate,
           parking_support,
@@ -326,6 +305,16 @@ export default function NewProjectPage() {
                 />
               </div>
               <div className="sm:col-span-2">
+                <label className="mb-2 block text-sm font-medium text-[var(--text)]">행사명</label>
+                <input
+                  type="text"
+                  value={event_name}
+                  onChange={(e) => setEventName(e.target.value)}
+                  className="input w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
+                  placeholder="예: 교원 연수, 체험학습, 설명회"
+                />
+              </div>
+              <div className="sm:col-span-2">
                 <div className="flex flex-wrap items-end gap-3">
                   <div className="w-full sm:w-[260px]">
                     <label className="mb-2 block text-sm font-medium text-[var(--text)]">사용 일자 (시작)</label>
@@ -333,7 +322,6 @@ export default function NewProjectPage() {
                       type="date"
                       value={ranges[0]?.start ?? ""}
                       onChange={(e) => updateRange(0, "start", e.target.value || "")}
-                      onBlur={(e) => updateRange(0, "start", e.target.value || (ranges[0]?.start ?? ""))}
                       className="input w-full px-3 py-2.5 text-[var(--text)]"
                     />
                   </div>
@@ -343,7 +331,6 @@ export default function NewProjectPage() {
                       type="date"
                       value={ranges[0]?.end ?? ""}
                       onChange={(e) => updateRange(0, "end", e.target.value || "")}
-                      onBlur={(e) => updateRange(0, "end", e.target.value || (ranges[0]?.end ?? ""))}
                       className="input w-full px-3 py-2.5 text-[var(--text)]"
                     />
                   </div>
@@ -479,22 +466,7 @@ export default function NewProjectPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      setIncludeWeekends((prev) => {
-                        const next = !prev;
-                        if (!next && prev) {
-                          setRanges((ranges) => {
-                            if (ranges.length !== 1) return ranges;
-                            const r0 = ranges[0];
-                            const s = String(r0.start ?? "").trim().slice(0, 10);
-                            const e = String(r0.end ?? "").trim().slice(0, 10);
-                            if (!isDateStr(s) || !isDateStr(e) || s > e) return ranges;
-                            const split = splitCalendarSpanToWeekdayRanges(s, e);
-                            if (split.length > 1) return split;
-                            return ranges;
-                          });
-                        }
-                        return next;
-                      });
+                      setIncludeWeekends((prev) => !prev);
                       setError("");
                     }}
                     className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold transition-colors ${

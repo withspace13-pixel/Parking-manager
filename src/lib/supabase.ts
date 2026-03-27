@@ -14,6 +14,7 @@ export type Project = {
   id: string;
   org_name: string;
   manager: string;
+  event_name?: string | null;
   start_date: string;
   end_date: string;
   parking_support: boolean;

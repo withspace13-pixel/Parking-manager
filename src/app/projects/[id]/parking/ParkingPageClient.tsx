@@ -125,7 +125,8 @@ export default function ParkingPageClient() {
           .select("*")
           .eq("project_id", projectId)
           .eq("date", date)
-          .order("vehicle_num");
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true });
         const list = (data || []).map((r: ParkingRecord) => ({
           vehicle_num: r.vehicle_num,
           date: r.date,
@@ -151,6 +152,7 @@ export default function ParkingPageClient() {
       if (!vehicle) return;
       if (isDevMode()) {
         const saved = devStore.upsertParkingRecord({
+          id: row.recordId,
           project_id: projectId,
           vehicle_num: vehicle,
           date: row.date,
@@ -175,11 +177,10 @@ export default function ParkingPageClient() {
           "30m_cnt": row["30m_cnt"],
           updated_at: new Date().toISOString(),
         };
-        const { data, error } = await supabase
-          .from("parking_records")
-          .upsert(payload, { onConflict: "project_id,vehicle_num,date" })
-          .select("id")
-          .single();
+        const query = row.recordId
+          ? supabase.from("parking_records").update(payload).eq("id", row.recordId).select("id").single()
+          : supabase.from("parking_records").insert(payload).select("id").single();
+        const { data, error } = await query;
         if (!error && data) {
           setRows((prev) =>
             prev.map((r, i) => (i === index ? { ...r, recordId: data.id } : r))

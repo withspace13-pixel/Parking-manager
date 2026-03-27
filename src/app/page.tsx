@@ -585,29 +585,29 @@ export default function HomePage() {
                         }
                       }}
                     >
-                      <div className="flex min-w-0 flex-1 items-center gap-4">
+                      <div className="flex min-w-0 flex-1 items-start gap-4">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--border)]">
                           <User className="h-5 w-5 text-[var(--text-muted)]" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="font-semibold text-[var(--text)]">{p.org_name}</p>
-                          <p className="text-sm text-[var(--text-muted)]">{p.manager}</p>
+                          <p className="font-semibold text-[var(--text)]">
+                            {p.org_name}
+                            <span className="text-sm font-normal text-[var(--text-muted)]"> / {p.manager}</span>
+                          </p>
+                          <p className="text-sm font-semibold text-indigo-600">{p.event_name || "행사명 미입력"}</p>
+                          <p className="mt-1 text-sm font-medium text-[var(--text)]">공간 : {p.roomName}</p>
                         </div>
-                        <div className="flex shrink-0 flex-wrap items-center gap-4 text-sm">
-                          <span className="text-[var(--text-muted)]">
-                            <span className="font-medium text-[var(--text)]">기간</span>{" "}
-                            {periodLabelById[p.id]?.list ??
-                              (p.start_date === p.end_date
-                                ? monthDay(p.start_date)
-                                : `${monthDay(p.start_date)} ~ ${monthDay(p.end_date)}`)}
-                          </span>
-                          <span className="text-[var(--text-muted)]">
-                            <span className="font-medium text-[var(--text)]">사용 공간</span> {p.roomName}
-                          </span>
-                          <Badge variant={p.parking_support ? "success" : "destructive"}>
-                            주차지원 {p.parking_support ? "O" : "X"}
-                          </Badge>
-                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-[var(--text)]">
+                          {periodLabelById[p.id]?.list ??
+                            (p.start_date === p.end_date
+                              ? monthDay(p.start_date)
+                              : `${monthDay(p.start_date)} ~ ${monthDay(p.end_date)}`)}
+                        </span>
+                        <Badge variant={p.parking_support ? "success" : "destructive"}>
+                          주차지원 {p.parking_support ? "O" : "X"}
+                        </Badge>
                       </div>
                       <div className="flex items-center gap-2">
                         {listMode === "archive" ? (

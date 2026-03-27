@@ -8,7 +8,7 @@ import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
 import type { Project } from "@/lib/supabase";
-import { datesYmdToConsecutiveRanges, splitCalendarSpanToWeekdayRanges } from "@/lib/schedule-dates";
+import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
 
 /** YYYY-MM-DD 형식인지 확인 */
 function isDateStr(s: string): boolean {
@@ -61,6 +61,7 @@ export default function EditProjectForm() {
   const [project, setProject] = useState<Project | null>(null);
   const [org_name, setOrgName] = useState("");
   const [manager, setManager] = useState("");
+  const [event_name, setEventName] = useState("");
   const [ranges, setRanges] = useState<ScheduleRange[]>([{ start: "", end: "" }]);
   const [includeWeekends, setIncludeWeekends] = useState(false);
   const [parking_support, setParkingSupport] = useState(false);
@@ -84,6 +85,7 @@ export default function EditProjectForm() {
       setProject(p);
       setOrgName(p.org_name);
       setManager(p.manager);
+      setEventName(p.event_name ?? "");
       // 저장된 날짜별 룸(project_rooms)이 있으면 그 날짜들로 일정 구간 복원 (중간 날 제거·띄엄일정 반영)
       const roomDates = Object.keys(roomMap)
         .map((d) => String(d).slice(0, 10))
@@ -165,25 +167,8 @@ export default function EditProjectForm() {
   })();
 
   const rangesLabel = (() => {
-    if (dateList.length === 0) return "";
-    const merged: Array<{ start: string; end: string }> = [];
-    const toTime = (ymd: string) => {
-      const [y, m, d] = ymd.split("-").map(Number);
-      return new Date(y, m - 1, d).getTime();
-    };
-    let curStart = dateList[0];
-    let prev = dateList[0];
-    for (let i = 1; i < dateList.length; i++) {
-      const next = dateList[i];
-      const isConsecutive = toTime(next) - toTime(prev) === 24 * 60 * 60 * 1000;
-      if (!isConsecutive) {
-        merged.push({ start: curStart, end: prev });
-        curStart = next;
-      }
-      prev = next;
-    }
-    merged.push({ start: curStart, end: prev });
-    return merged
+    if (normalizedRanges.length === 0) return "";
+    return normalizedRanges
       .map((r) => (r.start === r.end ? formatMdDow(r.start) : `${formatMdDow(r.start)} ~ ${formatMdDow(r.end)}`))
       .join(", ");
   })();
@@ -209,13 +194,7 @@ export default function EditProjectForm() {
     setRanges((prev) => {
       const list = Array.isArray(prev) ? prev : [{ start: "", end: "" }];
       const next = list.map((r, i) => (i === idx ? { ...r, [key]: v } : r));
-      if (idx !== 0 || list.length !== 1 || includeWeekends) return next;
-      const r0 = next[0];
-      if (!isDateStr(r0.start) || !isDateStr(r0.end) || r0.start > r0.end) return next;
-      const split = splitCalendarSpanToWeekdayRanges(r0.start, r0.end);
-      if (split.length === 0) return next;
-      if (split.length > 1) return split;
-      return [split[0]];
+      return next;
     });
   };
 
@@ -255,6 +234,7 @@ export default function EditProjectForm() {
     setError("");
     const name = String(org_name ?? "").trim();
     const mgr = String(manager ?? "").trim();
+    const eventName = String(event_name ?? "").trim();
     if (!name || !mgr) {
       setError("기관명과 담당자명을 입력해 주세요.");
       return;
@@ -281,6 +261,7 @@ export default function EditProjectForm() {
         devStore.updateProject(projectId, {
           org_name: name,
           manager: mgr,
+          event_name: eventName || null,
           start_date: sDate,
           end_date: eDate,
           parking_support,
@@ -297,6 +278,7 @@ export default function EditProjectForm() {
         .update({
           org_name: name,
           manager: mgr,
+          event_name: eventName || null,
           start_date: sDate,
           end_date: eDate,
           parking_support,
@@ -414,6 +396,16 @@ export default function EditProjectForm() {
                   onChange={(e) => setManager(e.target.value)}
                   className="input w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
                   placeholder="예: 홍길동"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-2 block text-sm font-medium text-[var(--text)]">행사명</label>
+                <input
+                  type="text"
+                  value={event_name}
+                  onChange={(e) => setEventName(e.target.value)}
+                  className="input w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
+                  placeholder="예: 교원 연수, 체험학습, 설명회"
                 />
               </div>
               <div className="sm:col-span-2">
@@ -544,23 +536,7 @@ export default function EditProjectForm() {
                   <button
                     type="button"
                     onClick={() => {
-                      setIncludeWeekends((prev) => {
-                        const next = !prev;
-                        if (!next && prev) {
-                          setRanges((ranges) => {
-                            const list = Array.isArray(ranges) ? ranges : [{ start: "", end: "" }];
-                            if (list.length !== 1) return list;
-                            const r0 = list[0];
-                            const s = String(r0.start ?? "").trim().slice(0, 10);
-                            const e = String(r0.end ?? "").trim().slice(0, 10);
-                            if (!isDateStr(s) || !isDateStr(e) || s > e) return list;
-                            const split = splitCalendarSpanToWeekdayRanges(s, e);
-                            if (split.length > 1) return split;
-                            return list;
-                          });
-                        }
-                        return next;
-                      });
+                      setIncludeWeekends((prev) => !prev);
                       setError("");
                     }}
                     className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold transition-colors ${

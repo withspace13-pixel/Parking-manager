@@ -4,10 +4,10 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Calculator, Download, Home, Receipt } from "lucide-react";
+import { ArrowLeft, Calculator, Download, Home } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
-import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
+import { datesYmdToConsecutiveRanges, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
 import { supabase, TICKET_PRICES } from "@/lib/supabase";
 import type { Project, ParkingRecord } from "@/lib/supabase";
 
@@ -38,15 +38,6 @@ function calcAmount(r: Pick<ParkingRecord, "all_day_cnt" | "2h_cnt" | "1h_cnt" |
     r["1h_cnt"] * TICKET_PRICES["1h"] +
     r["30m_cnt"] * TICKET_PRICES["30m"]
   );
-}
-
-function formatFreeDetail(r: DayFree): string {
-  const parts: string[] = [];
-  if (r.all_day_cnt) parts.push(`종일권 ${r.all_day_cnt}매`);
-  if (r["2h_cnt"]) parts.push(`2시간 ${r["2h_cnt"]}매`);
-  if (r["1h_cnt"]) parts.push(`1시간 ${r["1h_cnt"]}매`);
-  if (r["30m_cnt"]) parts.push(`30분 ${r["30m_cnt"]}매`);
-  return parts.length ? parts.join(", ") : "없음";
 }
 
 /** YYYY-MM-DD → YY-MM-DD (상단 사용 일자용) */
@@ -190,8 +181,8 @@ export default function SettlementPageClient() {
         .from("parking_records")
         .select("*")
         .eq("project_id", projectId)
-        .order("date")
-        .order("vehicle_num");
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true });
       setRecords((recs || []) as ParkingRecord[]);
     })();
   }, [projectId, devStore.data]);
@@ -202,9 +193,7 @@ export default function SettlementPageClient() {
         ? shortDate(project.start_date)
         : `${shortDate(project.start_date)} ~ ${shortDate(project.end_date)}`;
     }
-    return datesYmdToConsecutiveRanges(eventDates)
-      .map((r) => formatCompactRange(r.start, r.end))
-      .join(" ,   ");
+    return periodLabelMonthDayFromSortedYmd(eventDates);
   }, [eventDates, project]);
 
   const settlementLabelCompact = useMemo(() => {
@@ -263,7 +252,7 @@ export default function SettlementPageClient() {
       let dayAmount = 0;
 
       for (const r of dayRecs) {
-        const isFree = r.vehicle_num === max.vehicle_num && r.date === max.date;
+        const isFree = r.id === max.id;
         if (isFree) continue;
 
         const amt = calcAmount(r);
@@ -293,17 +282,21 @@ export default function SettlementPageClient() {
     () =>
       filteredRecords
         .slice()
-        .sort((a, b) => (a.date === b.date ? a.vehicle_num.localeCompare(b.vehicle_num) : a.date.localeCompare(b.date))),
+        .sort((a, b) => {
+          const at = new Date(a.created_at ?? 0).getTime();
+          const bt = new Date(b.created_at ?? 0).getTime();
+          if (at !== bt) return at - bt;
+          return a.id.localeCompare(b.id);
+        }),
     [filteredRecords]
   );
 
-  const freeKeySet = useMemo(() => new Set(dayFreeList.map((f) => `${f.date}-${f.vehicle_num}`)), [dayFreeList]);
+  const freeRecordIdSet = useMemo(() => new Set(dayFreeList.map((f) => f.id)), [dayFreeList]);
 
   const listTotals = useMemo(() => {
     return sortedRecords.reduce(
       (acc, r) => {
-        const key = `${r.date}-${r.vehicle_num}`;
-        const isFree = freeKeySet.has(key);
+        const isFree = freeRecordIdSet.has(r.id);
         const amount = isFree ? 0 : calcAmount(r);
         acc.all_day_cnt += r.all_day_cnt;
         acc["2h_cnt"] += r["2h_cnt"];
@@ -314,7 +307,7 @@ export default function SettlementPageClient() {
       },
       { all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0, amount: 0 }
     );
-  }, [sortedRecords, freeKeySet]);
+  }, [sortedRecords, freeRecordIdSet]);
 
   const settlementPeriodLabel = useMemo(() => {
     if (!settlementDatesSorted.length) return "";
@@ -322,6 +315,12 @@ export default function SettlementPageClient() {
       .map((r) => (r.start === r.end ? monthDay(r.start) : `${monthDay(r.start)} ~ ${monthDay(r.end)}`))
       .join(", ");
   }, [settlementDatesSorted]);
+
+  const usageDaysCount = useMemo(() => {
+    if (eventDates.length > 0) return eventDates.length;
+    if (!project?.start_date || !project?.end_date) return 0;
+    return getDateRange(project.start_date, project.end_date).length;
+  }, [eventDates, project?.start_date, project?.end_date]);
 
   const updateSettlementRange = (idx: number, key: "start" | "end", value: string) => {
     const v = value.slice(0, 10);
@@ -407,8 +406,8 @@ export default function SettlementPageClient() {
       </header>
 
       <main className="mx-auto max-w-6xl px-8 py-10">
-        <div ref={pdfExportRef}>
-        <div className="report-paper mb-8 p-8">
+        <div ref={pdfExportRef} className="flex flex-col gap-8">
+        <div className="report-paper p-8">
           <div className="mb-6 flex items-start justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Parking Invoice</p>
@@ -437,9 +436,14 @@ export default function SettlementPageClient() {
               <p className="mt-1 text-xl font-semibold text-[var(--text)]">{project.manager}</p>
             </div>
           </div>
-          <p className="mt-4 text-base font-semibold text-[var(--text)]">
-            사용 일자: {eventPeriodLabel}
-          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <p className="text-base font-semibold text-[var(--text)]">
+              사용 일자: {eventPeriodLabel}
+            </p>
+            <span className="inline-flex items-center rounded-full bg-amber-50 px-4 py-1.5 text-base font-extrabold text-amber-700">
+              총 {usageDaysCount}일 사용
+            </span>
+          </div>
         </div>
 
         {settlementEditorOpen && (
@@ -490,15 +494,6 @@ export default function SettlementPageClient() {
                       className="input min-h-[48px] min-w-[200px] px-4 py-3 text-base text-[var(--text)]"
                     />
                   </div>
-                  {idx === settlementRanges.length - 1 && (
-                    <button
-                      type="button"
-                      onClick={addSettlementRange}
-                      className="btn btn-relief shrink-0 px-4 py-2.5 text-sm"
-                    >
-                      구간 추가
-                    </button>
-                  )}
                   {settlementRanges.length > 1 && (
                     <button
                       type="button"
@@ -511,11 +506,27 @@ export default function SettlementPageClient() {
                 </div>
               ))}
             </div>
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={addSettlementRange}
+                className="btn btn-relief shrink-0 px-4 py-2.5 text-sm"
+              >
+                구간 추가
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettlementEditorOpen(false)}
+                className="btn btn-primary shrink-0 px-5 py-2.5 text-sm"
+              >
+                확인
+              </button>
+            </div>
           </div>
         )}
 
-        <div className="report-paper mb-8 overflow-hidden p-0">
-          <div className="flex items-center justify-between border-b border-[var(--border)] px-8 py-5">
+        <div className="order-2 report-paper overflow-hidden p-0">
+          <div className="border-b border-[var(--border)] px-6 py-4">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
               <Calculator className="h-4 w-4 text-[var(--text-muted)]" />
               일자별 발급 수량 및 정산 금액 (무료 건 제외)
@@ -524,41 +535,41 @@ export default function SettlementPageClient() {
           <table className="report-table report-table-compact text-left text-sm">
             <thead>
               <tr className="text-[var(--text-muted)]">
-                <th className="font-medium text-[var(--text)]">일자</th>
-                <th className="text-center font-medium text-[var(--text)]">종일권</th>
-                <th className="text-center font-medium text-[var(--text)]">2시간</th>
-                <th className="text-center font-medium text-[var(--text)]">1시간</th>
-                <th className="text-center font-medium text-[var(--text)]">30분</th>
-                <th className="text-right font-medium text-[var(--text)]">일자 합계</th>
+                <th className="px-6 font-medium text-[var(--text)]">일자</th>
+                <th className="px-6 text-center font-medium text-[var(--text)]">종일권 (30,000원)</th>
+                <th className="px-6 text-center font-medium text-[var(--text)]">2시간 (12,000원)</th>
+                <th className="px-6 text-center font-medium text-[var(--text)]">1시간 (6,000원)</th>
+                <th className="px-6 text-center font-medium text-[var(--text)]">30분 (3,000원)</th>
+                <th className="px-6 text-right font-medium text-[var(--text)]">일자 합계</th>
               </tr>
             </thead>
             <tbody>
               {daySummaries.map((row) => (
                 <tr key={row.date} className="table-row-hover">
-                  <td className="text-[var(--text-muted)]">{monthDay(row.date)}</td>
-                  <td className="text-center text-[var(--text-muted)]">{row.all_day_cnt}매</td>
-                  <td className="text-center text-[var(--text-muted)]">{row["2h_cnt"]}매</td>
-                  <td className="text-center text-[var(--text-muted)]">{row["1h_cnt"]}매</td>
-                  <td className="text-center text-[var(--text-muted)]">{row["30m_cnt"]}매</td>
-                  <td className="text-right text-[var(--text)]">{row.amount.toLocaleString()}원</td>
+                  <td className="px-6 text-[var(--text-muted)]">{monthDay(row.date)}</td>
+                  <td className="px-6 text-center text-[var(--text-muted)]">{row.all_day_cnt}매</td>
+                  <td className="px-6 text-center text-[var(--text-muted)]">{row["2h_cnt"]}매</td>
+                  <td className="px-6 text-center text-[var(--text-muted)]">{row["1h_cnt"]}매</td>
+                  <td className="px-6 text-center text-[var(--text-muted)]">{row["30m_cnt"]}매</td>
+                  <td className="px-6 text-right text-[var(--text)]">{row.amount.toLocaleString()}원</td>
                 </tr>
               ))}
               <tr>
-                <td className="font-semibold text-[var(--text)]">합계</td>
-                <td className="text-center font-semibold text-[var(--text)]">{totals.all_day_cnt}매</td>
-                <td className="text-center font-semibold text-[var(--text)]">{totals["2h_cnt"]}매</td>
-                <td className="text-center font-semibold text-[var(--text)]">{totals["1h_cnt"]}매</td>
-                <td className="text-center font-semibold text-[var(--text)]">{totals["30m_cnt"]}매</td>
-                <td className="text-right text-3xl font-extrabold text-emboss">{totals.amount.toLocaleString()}원</td>
+                <td className="px-6 font-semibold text-[var(--text)]">합계</td>
+                <td className="px-6 text-center font-semibold text-[var(--text)]">{totals.all_day_cnt}매</td>
+                <td className="px-6 text-center font-semibold text-[var(--text)]">{totals["2h_cnt"]}매</td>
+                <td className="px-6 text-center font-semibold text-[var(--text)]">{totals["1h_cnt"]}매</td>
+                <td className="px-6 text-center font-semibold text-[var(--text)]">{totals["30m_cnt"]}매</td>
+                <td className="px-6 text-right text-3xl font-extrabold text-emboss">{totals.amount.toLocaleString()}원</td>
               </tr>
             </tbody>
           </table>
           <p className="px-8 pb-5 pt-2 text-sm font-semibold text-red-600">
-            ※ 위 수량 및 금액은 아래 무료 적용 차량(1일 1대 최상위 금액) 건을 제외한 기준입니다.
+            ※ 위 수량 및 금액은 1일 1대 무료 건을 제외한 기준입니다.
           </p>
         </div>
 
-        <div className="mt-8 card p-6">
+        <div className="order-1 card p-6">
           <div className="mb-4 flex items-baseline justify-between gap-4">
             <div>
               <p className="text-sm font-semibold text-[var(--text)]">전체 발급 내역 (차량 · 일자별)</p>
@@ -582,8 +593,7 @@ export default function SettlementPageClient() {
               </thead>
               <tbody>
                 {sortedRecords.map((r) => {
-                  const key = `${r.date}-${r.vehicle_num}`;
-                  const isFree = freeKeySet.has(key);
+                  const isFree = freeRecordIdSet.has(r.id);
                   const amount = isFree ? 0 : calcAmount(r);
                   return (
                     <tr key={r.id} className={`table-row-hover ${isFree ? "bg-amber-100" : "bg-white"}`}>
@@ -610,32 +620,10 @@ export default function SettlementPageClient() {
             </table>
           </div>
           <p className="mt-4 text-sm font-semibold text-red-600">
-            ※ 위 수량 및 금액은 아래 무료 적용 차량(1일 1대 최상위 금액) 건을 제외한 기준입니다.
+            ※ 위 내역에서 노란색 부분은 1일 1대 무료 적용 차량입니다.
           </p>
         </div>
 
-        <div className="mt-8 rounded-2xl border border-[#D7E3F8] bg-[#F7FAFF] p-0">
-          <h3 className="flex items-center gap-2 border-b border-[var(--border)] px-6 py-4 text-sm font-semibold text-[var(--text)]">
-            <Receipt className="h-4 w-4 text-[var(--text-muted)]" />
-            1일 1대 최상위 금액 차량 무료 적용 내역
-          </h3>
-          <p className="border-b border-[var(--border)] px-6 py-3 text-xs text-[var(--text-muted)]">
-            각 날짜별 당일 발급 총액이 가장 높은 차량 1대를 무료 처리했습니다.
-          </p>
-          <ul className="divide-y divide-[var(--border)]">
-            {dayFreeList.length === 0 ? (
-              <li className="px-6 py-10 text-center text-[var(--text-muted)]">해당 기간 발급 내역이 없습니다.</li>
-            ) : (
-              dayFreeList.map((row) => (
-                <li key={`${row.date}-${row.vehicle_num}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-2 px-6 py-5 text-sm transition-colors table-row-hover">
-                  <span className="font-medium text-[var(--text)]">{monthDay(row.date)}</span>
-                  <span className="font-bold text-[var(--text)]">{row.vehicle_num}차량</span>
-                  <span className="text-[var(--text-muted)]">– {formatFreeDetail(row)} 무료 적용</span>
-                </li>
-              ))
-            )}
-          </ul>
-        </div>
         </div>
 
         <div className="mt-8 flex flex-wrap gap-3">

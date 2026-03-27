@@ -53,7 +53,7 @@ type DevStoreContextValue = {
   getRooms: (projectId: string) => ProjectRoom[];
   saveRooms: (projectId: string, rooms: { date: string; room_name: string }[]) => void;
   getParkingRecords: (projectId: string, date?: string) => ParkingRecord[];
-  upsertParkingRecord: (record: Omit<ParkingRecord, "id">) => ParkingRecord;
+  upsertParkingRecord: (record: Omit<ParkingRecord, "id"> & { id?: string }) => ParkingRecord;
   deleteParkingRecord: (id: string) => void;
   deleteProject: (id: string) => void;
 };
@@ -167,25 +167,16 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const upsertParkingRecord = useCallback(
-    (record: Omit<ParkingRecord, "id">) => {
-      const existing = (data.parking_records ?? []).find(
-        (r) =>
-          r.project_id === record.project_id &&
-          r.vehicle_num === record.vehicle_num &&
-          r.date === record.date
-      );
+    (record: Omit<ParkingRecord, "id"> & { id?: string }) => {
+      const existing = record.id
+        ? (data.parking_records ?? []).find((r) => r.id === record.id)
+        : null;
       const updated: ParkingRecord = existing
-        ? { ...existing, ...record }
+        ? { ...existing, ...record, id: existing.id }
         : { ...record, id: uuid() };
 
       const nextRecords = existing
-        ? (data.parking_records ?? []).map((r) =>
-            r.project_id === record.project_id &&
-            r.vehicle_num === record.vehicle_num &&
-            r.date === record.date
-              ? updated
-              : r
-          )
+        ? (data.parking_records ?? []).map((r) => (r.id === existing.id ? updated : r))
         : [...(data.parking_records ?? []), updated];
 
       save({ ...data, parking_records: nextRecords });
