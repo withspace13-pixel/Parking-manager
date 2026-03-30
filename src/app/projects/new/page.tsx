@@ -7,7 +7,12 @@ import { ArrowLeft, Copy, Home, Save, X } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
-import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
+import { datesYmdToFormRanges, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
+import { OrgNameField } from "@/components/OrgNameField";
+import favoriteOrgNamesJson from "@/data/favorite-org-names.json";
+import { buildOrgNameList } from "@/lib/org-name-suggestions";
+
+const FAVORITE_ORG_NAMES = favoriteOrgNamesJson as string[];
 
 /** YYYY-MM-DD 형식인지 확인 */
 function isDateStr(s: string): boolean {
@@ -64,11 +69,11 @@ export default function NewProjectPage() {
   const [roomByDate, setRoomByDate] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [orgNameCandidates, setOrgNameCandidates] = useState<string[]>([]);
 
-  // Supabase URL 확인용 (연동 디버깅 후 제거 가능)
   useEffect(() => {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    console.log("[Supabase 연결] URL:", url || "(비어 있음)");
+    // 요청대로: favorite-org-names.json에 있는 목록만 후보로 사용합니다.
+    setOrgNameCandidates(buildOrgNameList(FAVORITE_ORG_NAMES, []));
   }, []);
 
   const normalizedRanges = (() => {
@@ -92,10 +97,8 @@ export default function NewProjectPage() {
   })();
 
   const rangesLabel = (() => {
-    if (normalizedRanges.length === 0) return "";
-    return normalizedRanges
-      .map((r) => (r.start === r.end ? formatMdDow(r.start) : `${formatMdDow(r.start)} ~ ${formatMdDow(r.end)}`))
-      .join(", ");
+    if (dateList.length === 0) return "";
+    return periodLabelMonthDayFromSortedYmd([...dateList]);
   })();
 
   const addRange = () => {
@@ -140,7 +143,7 @@ export default function NewProjectPage() {
       return;
     }
     const nextDates = dateList.filter((d) => d !== ymd);
-    const newRanges = datesYmdToConsecutiveRanges(nextDates);
+    const newRanges = datesYmdToFormRanges(nextDates, includeWeekends);
     setRanges(newRanges);
     setRoomByDate((prev) => {
       const n = { ...prev };
@@ -286,13 +289,15 @@ export default function NewProjectPage() {
             <div className="grid gap-5 sm:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text)]">기관명</label>
-                <input
-                  type="text"
+                <OrgNameField
                   value={org_name}
-                  onChange={(e) => setOrgName(e.target.value)}
-                  className="input w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
+                  onChange={setOrgName}
+                  candidates={orgNameCandidates}
                   placeholder="예: OO대학교"
                 />
+                <p className="mt-1.5 text-xs text-[var(--text-muted)]">
+                  입력시 해당 내용이 포함된 기관명이 제안되며, 선택할 수 있습니다.
+                </p>
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text)]">담당자명</label>

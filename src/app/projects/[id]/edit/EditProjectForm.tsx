@@ -8,7 +8,7 @@ import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
 import type { Project } from "@/lib/supabase";
-import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
+import { datesYmdToFormRanges, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
 
 /** YYYY-MM-DD 형식인지 확인 */
 function isDateStr(s: string): boolean {
@@ -90,8 +90,9 @@ export default function EditProjectForm() {
       const roomDates = Object.keys(roomMap)
         .map((d) => String(d).slice(0, 10))
         .sort();
+      const hasWeekendRoom = Object.keys(roomMap).some((d) => isWeekendDate(d));
       if (roomDates.length > 0) {
-        setRanges(datesYmdToConsecutiveRanges(roomDates));
+        setRanges(datesYmdToFormRanges(roomDates, hasWeekendRoom));
       } else {
         setRanges([
           {
@@ -103,7 +104,6 @@ export default function EditProjectForm() {
       setParkingSupport(!!p.parking_support);
       setRemarks(p.remarks ?? "");
       setRoomByDate(roomMap);
-      const hasWeekendRoom = Object.keys(roomMap).some((d) => isWeekendDate(d));
       setIncludeWeekends(hasWeekendRoom);
     }
 
@@ -167,10 +167,8 @@ export default function EditProjectForm() {
   })();
 
   const rangesLabel = (() => {
-    if (normalizedRanges.length === 0) return "";
-    return normalizedRanges
-      .map((r) => (r.start === r.end ? formatMdDow(r.start) : `${formatMdDow(r.start)} ~ ${formatMdDow(r.end)}`))
-      .join(", ");
+    if (dateList.length === 0) return "";
+    return periodLabelMonthDayFromSortedYmd([...dateList]);
   })();
 
   const addRange = () => {
@@ -220,7 +218,7 @@ export default function EditProjectForm() {
       return;
     }
     const nextDates = dateList.filter((d) => d !== ymd);
-    setRanges(datesYmdToConsecutiveRanges(nextDates));
+    setRanges(datesYmdToFormRanges(nextDates, includeWeekends));
     setRoomByDate((prev) => {
       const n = { ...prev };
       delete n[ymd];

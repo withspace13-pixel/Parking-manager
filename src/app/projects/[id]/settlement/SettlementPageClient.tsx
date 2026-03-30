@@ -103,6 +103,7 @@ export default function SettlementPageClient() {
   const [eventDates, setEventDates] = useState<string[]>([]);
   const pdfExportRef = useRef<HTMLDivElement>(null);
   const [pdfSaving, setPdfSaving] = useState(false);
+  const [hideSettlementControlsForPdf, setHideSettlementControlsForPdf] = useState(false);
   const [settlementEditorOpen, setSettlementEditorOpen] = useState(false);
   /** 정산에 포함할 기간(행사 start~end 범위 내). 기본은 행사 전체 */
   const [settlementRanges, setSettlementRanges] = useState<Array<{ start: string; end: string }>>([]);
@@ -353,6 +354,7 @@ export default function SettlementPageClient() {
   const handlePdfDownload = async () => {
     if (!pdfExportRef.current || !project) return;
     setSettlementEditorOpen(false);
+    setHideSettlementControlsForPdf(true);
     setPdfSaving(true);
     try {
       const { downloadParkingHistoryPdf } = await import("@/lib/parking-history-pdf");
@@ -362,6 +364,7 @@ export default function SettlementPageClient() {
       alert("PDF 저장 중 오류가 발생했습니다.");
     } finally {
       setPdfSaving(false);
+      setHideSettlementControlsForPdf(false);
     }
   };
 
@@ -413,18 +416,20 @@ export default function SettlementPageClient() {
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Parking Invoice</p>
               <h2 className="mt-2 text-3xl font-extrabold text-[var(--text)]">주차권 발급 정산서</h2>
             </div>
-            <div className="text-right">
-              <button
-                type="button"
-                onClick={() => setSettlementEditorOpen((prev) => !prev)}
-                className="btn btn-relief px-4 py-2 text-sm"
-              >
-                정산 기간 수정
-              </button>
-              <p className="mt-2 text-sm font-semibold text-[var(--text)]">
-                {isSettlementSameAsUsage ? "사용 일자와 동일" : settlementLabelCompact}
-              </p>
-            </div>
+            {!hideSettlementControlsForPdf && (
+              <div className="text-right">
+                <button
+                  type="button"
+                  onClick={() => setSettlementEditorOpen((prev) => !prev)}
+                  className="btn btn-relief px-4 py-2 text-sm"
+                >
+                  정산 기간 수정
+                </button>
+                <p className="mt-2 text-sm font-semibold text-[var(--text)]">
+                  {isSettlementSameAsUsage ? "사용 일자와 동일" : settlementLabelCompact}
+                </p>
+              </div>
+            )}
           </div>
           <div className="grid gap-6 sm:grid-cols-2">
             <div>

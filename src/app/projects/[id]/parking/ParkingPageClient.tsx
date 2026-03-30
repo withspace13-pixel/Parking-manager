@@ -8,6 +8,14 @@ import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
 import type { Project, ParkingRecord } from "@/lib/supabase";
+import { formatMonthDaySlash, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
+
+function fallbackPeriodFromProject(p: Project): string {
+  const s = String(p.start_date).slice(0, 10);
+  const e = String(p.end_date).slice(0, 10);
+  if (s.length < 10 || e.length < 10) return "";
+  return s === e ? formatMonthDaySlash(s) : `${formatMonthDaySlash(s)} ~ ${formatMonthDaySlash(e)}`;
+}
 
 function getDateRange(start: string, end: string): string[] {
   const dates: string[] = [];
@@ -43,8 +51,13 @@ export default function ParkingPageClient() {
   const projectId = params.id as string;
   const devStore = useDevStore();
   const [project, setProject] = useState<Project | null>(null);
+  const [remarksInput, setRemarksInput] = useState("");
+  const [remarksSaving, setRemarksSaving] = useState(false);
+  const [togglingSupport, setTogglingSupport] = useState(false);
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedRoomName, setSelectedRoomName] = useState<string>("미지정");
+  const [roomsSummaryLine, setRoomsSummaryLine] = useState("");
+  const [periodLabelLine, setPeriodLabelLine] = useState("");
   const [rows, setRows] = useState<RowState[]>([]);
   const vehicleRefs = useRef<(HTMLInputElement | null)[]>([]);
   const ticketRefs = useRef<(HTMLInputElement | null)[][]>([]);
@@ -87,6 +100,44 @@ export default function ParkingPageClient() {
   }, [project, selectedDate, projectId, devStore]);
 
   useEffect(() => {
+    if (!projectId || !project) return;
+    const proj = project;
+
+    function applyFromRoomRows(rows: { date: string; room_name: string }[]) {
+      const sortedDates = Array.from(new Set(rows.map((r) => String(r.date).slice(0, 10)))).sort();
+      const period =
+        sortedDates.length > 0
+          ? periodLabelMonthDayFromSortedYmd(sortedDates)
+          : fallbackPeriodFromProject(proj);
+      setPeriodLabelLine(period);
+      const byDate = [...rows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      const seen = new Set<string>();
+      const names: string[] = [];
+      for (const r of byDate) {
+        const n = (r.room_name ?? "").trim() || "미지정";
+        if (!seen.has(n)) {
+          seen.add(n);
+          names.push(n);
+        }
+      }
+      setRoomsSummaryLine(names.length > 0 ? names.join(", ") : "미지정");
+    }
+
+    if (isDevMode()) {
+      applyFromRoomRows(devStore.getRooms(projectId));
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase.from("project_rooms").select("date, room_name").eq("project_id", projectId);
+      if (!cancelled) applyFromRoomRows(data ?? []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, project, devStore.data]);
+
+  useEffect(() => {
     if (isDevMode()) {
       const p = devStore.getProject(projectId);
       if (p) setProject(p);
@@ -102,6 +153,64 @@ export default function ParkingPageClient() {
     }
     loadProject();
   }, [projectId, devStore.data]);
+
+  useEffect(() => {
+    if (project) setRemarksInput(project.remarks ?? "");
+  }, [project?.id, project?.remarks]);
+
+  const handleToggleParkingSupport = useCallback(async () => {
+    if (!project || togglingSupport) return;
+    const next = !project.parking_support;
+    setTogglingSupport(true);
+    try {
+      if (isDevMode()) {
+        devStore.updateProject(projectId, { parking_support: next });
+        const p = devStore.getProject(projectId);
+        if (p) setProject(p);
+      } else {
+        const { error } = await supabase
+          .from("projects")
+          .update({ parking_support: next, updated_at: new Date().toISOString() })
+          .eq("id", projectId);
+        if (error) {
+          console.error(error);
+          alert("주차지원 여부를 저장하지 못했습니다.");
+          return;
+        }
+        setProject((prev) => (prev ? { ...prev, parking_support: next } : prev));
+      }
+    } finally {
+      setTogglingSupport(false);
+    }
+  }, [project, projectId, togglingSupport, devStore]);
+
+  const saveRemarks = useCallback(async () => {
+    if (!project) return;
+    const trimmed = remarksInput.trim();
+    const prev = (project.remarks ?? "").trim();
+    if (trimmed === prev) return;
+    setRemarksSaving(true);
+    try {
+      if (isDevMode()) {
+        devStore.updateProject(projectId, { remarks: trimmed || null });
+        const p = devStore.getProject(projectId);
+        if (p) setProject(p);
+      } else {
+        const { error } = await supabase
+          .from("projects")
+          .update({ remarks: trimmed || null, updated_at: new Date().toISOString() })
+          .eq("id", projectId);
+        if (error) {
+          console.error(error);
+          alert("비고를 저장하지 못했습니다.");
+          return;
+        }
+        setProject((p) => (p ? { ...p, remarks: trimmed || null } : p));
+      }
+    } finally {
+      setRemarksSaving(false);
+    }
+  }, [project, projectId, remarksInput, devStore]);
 
   const loadRecords = useCallback(
     (date: string) => {
@@ -220,12 +329,15 @@ export default function ParkingPageClient() {
   );
 
   const addRow = useCallback(() => {
-    setRows((prev) => [
-      ...prev,
-      { vehicle_num: "", date: selectedDate, all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0 },
-    ]);
-    setTimeout(() => vehicleRefs.current[rows.length]?.focus(), 0);
-  }, [selectedDate, rows.length]);
+    setRows((prev) => {
+      const newIndex = prev.length;
+      setTimeout(() => vehicleRefs.current[newIndex]?.focus(), 0);
+      return [
+        ...prev,
+        { vehicle_num: "", date: selectedDate, all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0 },
+      ];
+    });
+  }, [selectedDate]);
 
   const removeRow = useCallback(
     (index: number) => {
@@ -240,40 +352,35 @@ export default function ParkingPageClient() {
   );
 
   const onVehicleKeyDown = (e: React.KeyboardEvent, index: number) => {
+    const lastTicketCol = TICKET_KEYS.length - 1;
     if (e.key === "Enter") {
       e.preventDefault();
-      const row = rows[index];
-      const v = String(row?.vehicle_num ?? "").trim().slice(0, 4);
-      if (v) {
-        saveRow({ ...row!, vehicle_num: v }, index);
-        ticketRefs.current[index]?.[0]?.focus();
-      }
+      saveVehicleRow(index);
+      addRow();
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       if (index > 0) vehicleRefs.current[index - 1]?.focus();
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
       if (index < rows.length - 1) vehicleRefs.current[index + 1]?.focus();
-    } else if (e.key === "ArrowRight") {
+    } else if (e.key === "ArrowLeft") {
       e.preventDefault();
-      ticketRefs.current[index]?.[0]?.focus();
-    } else if (e.key === "Tab" && !e.shiftKey) {
+      if (index > 0) ticketRefs.current[index - 1]?.[lastTicketCol]?.focus();
+    } else if (e.key === "ArrowRight") {
       e.preventDefault();
       ticketRefs.current[index]?.[0]?.focus();
     }
   };
 
   const onTicketKeyDown = (e: React.KeyboardEvent, rowIndex: number, colIndex: number) => {
+    const lastCol = TICKET_KEYS.length - 1;
+
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      const row = rows[rowIndex];
-      const key = TICKET_KEYS[colIndex];
-      updateRow(rowIndex, key, (row[key] || 0) + 1);
+      if (rowIndex > 0) ticketRefs.current[rowIndex - 1]?.[colIndex]?.focus();
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      const row = rows[rowIndex];
-      const key = TICKET_KEYS[colIndex];
-      updateRow(rowIndex, key, Math.max(0, (row[key] || 0) - 1));
+      if (rowIndex < rows.length - 1) ticketRefs.current[rowIndex + 1]?.[colIndex]?.focus();
     } else if (e.key === "ArrowLeft") {
       e.preventDefault();
       if (colIndex > 0) {
@@ -283,21 +390,22 @@ export default function ParkingPageClient() {
       }
     } else if (e.key === "ArrowRight") {
       e.preventDefault();
-      if (colIndex < TICKET_KEYS.length - 1) {
+      if (colIndex < lastCol) {
         ticketRefs.current[rowIndex]?.[colIndex + 1]?.focus();
+      } else if (rowIndex < rows.length - 1) {
+        vehicleRefs.current[rowIndex + 1]?.focus();
       }
-    } else if (e.key === "Tab" && !e.shiftKey && rowIndex === rows.length - 1 && colIndex === TICKET_KEYS.length - 1) {
+    } else if (e.key === "Tab" && !e.shiftKey && colIndex === lastCol) {
       e.preventDefault();
-      const nextIndex = rows.length;
-      addRow();
-      setTimeout(() => vehicleRefs.current[nextIndex]?.focus(), 0);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (colIndex < TICKET_KEYS.length - 1) {
-        ticketRefs.current[rowIndex]?.[colIndex + 1]?.focus();
+      if (rowIndex < rows.length - 1) {
+        vehicleRefs.current[rowIndex + 1]?.focus();
       } else {
         addRow();
       }
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      saveVehicleRow(rowIndex);
+      addRow();
     }
   };
 
@@ -315,7 +423,7 @@ export default function ParkingPageClient() {
   return (
     <div className="min-h-screen bg-[var(--bg)]">
       <header className="border-b border-[var(--border)] bg-white">
-        <div className="mx-auto max-w-6xl px-6 py-5">
+        <div className="mx-auto max-w-7xl px-8 py-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <button
@@ -333,33 +441,64 @@ export default function ParkingPageClient() {
       </header>
 
       <main className="mx-auto max-w-7xl px-8 py-10">
-        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-3 rounded-2xl border border-[#DCE8FF] bg-[#EFF4FF] px-6 py-5">
-            <p className="text-lg font-semibold text-[var(--text)]">
-              {project.org_name}{" "}
-              <span className="text-base font-normal text-[var(--text-muted)]">/ {project.manager}</span>
-            </p>
-            <div className="flex flex-wrap items-center gap-4 text-base">
-              <span className="font-semibold text-[var(--text)]">
-                주차지원{" "}
-                <span
-                  className={
-                    project.parking_support ? "text-emerald-600 font-bold" : "text-rose-600 font-bold"
-                  }
-                >
-                  {project.parking_support ? "O" : "X"}
-                </span>
-              </span>
-              {project.remarks && (
-                <span className="font-semibold text-[var(--text)]">{project.remarks}</span>
-              )}
+        <div className="mb-8 flex flex-wrap items-start justify-between gap-6">
+          <div className="flex min-w-0 flex-1 flex-wrap items-start gap-6">
+            <div className="min-w-[260px] space-y-3 rounded-2xl border border-[#DCE8FF] bg-[#EFF4FF] px-6 py-5">
+              <p className="text-lg font-semibold text-[var(--text)]">
+                {project.org_name}{" "}
+                <span className="text-base font-normal text-[var(--text-muted)]">/ {project.manager}</span>
+              </p>
+              <p className="text-base font-semibold text-[var(--text)]">
+                공간 : <span className="font-semibold text-[var(--text)]">{roomsSummaryLine || selectedRoomName}</span>
+              </p>
+              <p className="text-lg font-bold tracking-tight text-[var(--text)]">
+                {periodLabelLine || fallbackPeriodFromProject(project)}
+              </p>
             </div>
-            <p className="text-base font-semibold text-[var(--text)]">
-              사용 공간{" "}
-              <span className="font-semibold text-[var(--text)]">{selectedRoomName}</span>
-            </p>
+            <div className="flex min-w-[200px] flex-1 flex-col gap-4 sm:max-w-xl">
+              <div className="max-w-md space-y-1.5">
+                <div className="flex items-center gap-4">
+                  <span className="shrink-0 text-base font-semibold text-[var(--text)]">주차지원</span>
+                  <button
+                    type="button"
+                    title="클릭하여 주차지원 여부 변경"
+                    aria-pressed={project.parking_support}
+                    aria-label={project.parking_support ? "주차지원 함" : "주차지원 안 함"}
+                    aria-describedby="parking-support-hint"
+                    disabled={togglingSupport}
+                    onClick={() => void handleToggleParkingSupport()}
+                    className={`inline-flex h-10 min-w-[3rem] shrink-0 items-center justify-center rounded-full border px-4 text-base font-bold tabular-nums transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60 ${
+                      project.parking_support
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : "border-rose-200 bg-rose-50 text-rose-600"
+                    }`}
+                  >
+                    {project.parking_support ? "O" : "X"}
+                  </button>
+                </div>
+                <p id="parking-support-hint" className="text-sm leading-snug text-[var(--text-muted)]">
+                  버튼을 눌러 주차지원 여부를 변경할 수 있습니다.
+                </p>
+              </div>
+              <div className="flex w-full min-w-0 items-center gap-4">
+                <label htmlFor="parking-remarks" className="shrink-0 text-base font-semibold text-[var(--text)]">
+                  비고
+                </label>
+                <input
+                  id="parking-remarks"
+                  type="text"
+                  value={remarksInput}
+                  onChange={(e) => setRemarksInput(e.target.value)}
+                  onBlur={() => void saveRemarks()}
+                  disabled={remarksSaving}
+                  className="input min-w-0 flex-1 px-3 py-2.5 text-base text-[var(--text)] placeholder:text-[var(--text-muted)] disabled:opacity-60"
+                  placeholder="비고 없음"
+                  autoComplete="off"
+                />
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex shrink-0 flex-wrap items-center gap-4">
             <label className="text-sm font-medium text-[var(--text)]">일자</label>
             <select
               value={selectedDate}
@@ -381,7 +520,7 @@ export default function ParkingPageClient() {
         </div>
 
         <p className="mb-4 text-xs text-[var(--text-muted)]">
-          차량 4자리 → Enter 시 숫자 칸으로 이동. Tab으로 다음 칸. ↑↓로 수량 증감.
+          방향키로 상하좌우 이동. Tab은 다음칸으로 이동하며, Enter는 새 행을 만든 뒤 그 행으로 이동합니다.
         </p>
 
         <div className="card card-hover overflow-x-auto p-8">
@@ -420,10 +559,10 @@ export default function ParkingPageClient() {
                           if (!ticketRefs.current[index]) ticketRefs.current[index] = [];
                           ticketRefs.current[index][colIndex] = el;
                         }}
-                        type="number"
-                        min={0}
+                        type="text"
+                        inputMode="numeric"
                         value={row[key] === 0 ? "" : row[key]}
-                        onChange={(e) => updateRow(index, key, e.target.value)}
+                        onChange={(e) => updateRow(index, key, e.target.value.replace(/\D/g, ""))}
                         onKeyDown={(e) => onTicketKeyDown(e, index, colIndex)}
                         className="input-inset w-full px-1 py-1.5 text-center text-sm text-[var(--text)]"
                       />
@@ -434,6 +573,7 @@ export default function ParkingPageClient() {
                     {(row.recordId || row.vehicle_num?.trim()) && (
                       <button
                         type="button"
+                        tabIndex={-1}
                         onClick={() => removeRow(index)}
                         className="rounded p-1.5 text-[var(--text-muted)] hover:bg-red-50 hover:text-red-600"
                         title="삭제"

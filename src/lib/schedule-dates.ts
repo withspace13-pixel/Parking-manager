@@ -54,6 +54,49 @@ export function splitCalendarSpanToWeekdayRanges(start: string, end: string): { 
   return datesYmdToConsecutiveRanges(weekdays);
 }
 
+/** prev 다음날~curr 전날 사이에, 집합에 없는 평일이 있으면 true (구간 분리 필요) */
+function weekdaysMissingStrictlyBetween(set: Set<string>, prev: string, curr: string): boolean {
+  const [sy, sm, sd] = prev.split("-").map(Number);
+  for (let i = 1; i < 400; i++) {
+    const cal = new Date(sy, sm - 1, sd + i);
+    const y = cal.getFullYear();
+    const m = String(cal.getMonth() + 1).padStart(2, "0");
+    const day = String(cal.getDate()).padStart(2, "0");
+    const str = `${y}-${m}-${day}`;
+    if (str >= curr) break;
+    if (isWeekdayYmd(str) && !set.has(str)) return true;
+  }
+  return false;
+}
+
+/**
+ * 기관 등록/수정 화면의 시작~종료 입력 행을 만들 때 사용.
+ * - 주말 포함: 캘린더상 하루라도 끊기면 구간 분리 (기존 datesYmdToConsecutiveRanges와 동일)
+ * - 주말 제외: 평일만 보면 이어지면 주말이 끼어 있어도 한 구간으로 합침 (금→월 등)
+ */
+export function datesYmdToFormRanges(dates: string[], includeWeekends: boolean): { start: string; end: string }[] {
+  const sorted = Array.from(new Set(dates.map((d) => String(d).slice(0, 10)))).sort();
+  if (sorted.length === 0) return [];
+  if (includeWeekends) return datesYmdToConsecutiveRanges(sorted);
+
+  const set = new Set(sorted);
+  const out: { start: string; end: string }[] = [];
+  let runStart = sorted[0]!;
+  let runEnd = sorted[0]!;
+  for (let i = 1; i < sorted.length; i++) {
+    const d = sorted[i]!;
+    if (weekdaysMissingStrictlyBetween(set, runEnd, d)) {
+      out.push({ start: runStart, end: runEnd });
+      runStart = d;
+      runEnd = d;
+    } else {
+      runEnd = d;
+    }
+  }
+  out.push({ start: runStart, end: runEnd });
+  return out;
+}
+
 /** YYYY-MM-DD 목록을 캘린더상 연속 구간 { start, end }[] 로 묶음 (하루 건너뛰면 구간 분리) */
 export function datesYmdToConsecutiveRanges(dates: string[]): { start: string; end: string }[] {
   const sorted = Array.from(new Set(dates.map((d) => String(d).slice(0, 10)))).sort();
