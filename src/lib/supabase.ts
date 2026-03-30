@@ -17,7 +17,7 @@ export type Project = {
   event_name?: string | null;
   start_date: string;
   end_date: string;
-  parking_support: boolean;
+  parking_support: boolean | null;
   remarks: string | null;
   created_at?: string;
   updated_at?: string;

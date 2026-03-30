@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, startTransition } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   PlusCircle,
@@ -58,7 +58,7 @@ export default function HomePage() {
   const router = useRouter();
   const [today] = useState(() => todayString());
   const [listMode, setListMode] = useState<"active" | "archive">("active");
-  const [supportFilter, setSupportFilter] = useState<"all" | "onlySupport" | "onlyNoSupport">("all");
+  const [supportFilter, setSupportFilter] = useState<"all" | "onlySupport" | "onlyNoSupport" | "onlyUnknown">("all");
   const [selectedDate, setSelectedDate] = useState(today);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
@@ -78,6 +78,7 @@ export default function HomePage() {
   const projectPickerRef = useRef<HTMLDivElement | null>(null);
   /** roomByProjectId가 현재 selectedDate 기준으로 갱신되었을 때만 선택 해제(useEffect)를 적용 — 날짜 전환 직후 레이스 방지 */
   const lastRoomFetchForDateRef = useRef<string | null>(null);
+  const roomByProjectIdCacheRef = useRef<Map<string, Record<string, string>>>(new Map());
 
   useEffect(() => {
     if (isDevMode()) {
@@ -152,6 +153,14 @@ export default function HomePage() {
     }
     const ids = sourceProjects.map((p) => p.id);
     const dateForThisFetch = selectedDate;
+    const idsKey = [...ids].sort().join("|");
+    const cacheKey = `${dateForThisFetch}__${idsKey}`;
+    const cached = roomByProjectIdCacheRef.current.get(cacheKey);
+    if (cached) {
+      setRoomByProjectId(cached);
+      lastRoomFetchForDateRef.current = dateForThisFetch;
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
@@ -169,6 +178,12 @@ export default function HomePage() {
         }
         setRoomByProjectId(map);
         lastRoomFetchForDateRef.current = dateForThisFetch;
+        roomByProjectIdCacheRef.current.set(cacheKey, map);
+        // 방어적으로 캐시가 무한정 커지지 않게 제한
+        if (roomByProjectIdCacheRef.current.size > 20) {
+          const firstKey = roomByProjectIdCacheRef.current.keys().next().value as string | undefined;
+          if (firstKey) roomByProjectIdCacheRef.current.delete(firstKey);
+        }
       } catch {
         if (cancelled) return;
         setRoomByProjectId({});
@@ -265,9 +280,11 @@ export default function HomePage() {
 
   const projectsForDateWithFilter = useMemo(() => {
     if (supportFilter === "all") return projectsForDate;
-    return projectsForDate.filter((p) =>
-      supportFilter === "onlySupport" ? p.parking_support : !p.parking_support
-    );
+    return projectsForDate.filter((p) => {
+      if (supportFilter === "onlySupport") return p.parking_support === true;
+      if (supportFilter === "onlyNoSupport") return p.parking_support === false;
+      return p.parking_support == null;
+    });
   }, [projectsForDate, supportFilter]);
 
   const projectsWithRoom: ProjectWithRoom[] = useMemo(
@@ -334,9 +351,11 @@ export default function HomePage() {
 
   const handleSelectArchiveFullListRow = (p: Project) => {
     const d = primaryRoomDateByProjectId[p.id] ?? String(p.end_date).slice(0, 10);
-    setSelectedDate(d);
-    setSelectedProjectId(p.id);
-    setProjectPickerOpen(false);
+    startTransition(() => {
+      setSelectedDate(d);
+      setSelectedProjectId(p.id);
+      setProjectPickerOpen(false);
+    });
   };
 
   const handleDeleteProject = async (projectId: string) => {
@@ -362,15 +381,21 @@ export default function HomePage() {
     }
   };
 
+  const parkingSupportUi = (v: Project["parking_support"]) => {
+    if (v === true) return { label: "O", variant: "success" as const, className: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+    if (v === false) return { label: "X", variant: "destructive" as const, className: "border-rose-200 bg-rose-50 text-rose-600" };
+    return { label: "미정", variant: "secondary" as const, className: "border-amber-200 bg-amber-50 text-amber-700" };
+  };
+
   const handleToggleParkingSupport = async (
     e: ReactMouseEvent<HTMLButtonElement>,
     projectId: string,
-    current: boolean
+    current: Project["parking_support"]
   ) => {
     e.stopPropagation();
     e.preventDefault();
     if (togglingParkingId === projectId) return;
-    const next = !current;
+    const next = current === true ? false : current === false ? null : true;
     setTogglingParkingId(projectId);
     try {
       if (isDevMode()) {
@@ -403,7 +428,14 @@ export default function HomePage() {
             <div className="flex items-center gap-4">
               <button
                 type="button"
-                onClick={() => router.push("/")}
+                onClick={() => {
+                  setListMode("active");
+                  setSupportFilter("all");
+                  setSelectedDate(today);
+                  setSelectedProjectId(null);
+                  setProjectPickerOpen(false);
+                  setActionMenuProjectId(null);
+                }}
                 className="inline-flex items-center justify-center rounded-full border border-[var(--border)] bg-white p-2 text-[var(--text-muted)] shadow-sm hover:bg-[var(--bg)] hover:text-[var(--text)]"
                 aria-label="홈으로"
               >
@@ -495,11 +527,22 @@ export default function HomePage() {
                 >
                   X
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setSupportFilter("onlyUnknown")}
+                  className={`rounded-full px-2 py-0.5 ${
+                    supportFilter === "onlyUnknown"
+                      ? "bg-white text-[var(--text)] shadow-sm"
+                      : "text-[var(--text-muted)]"
+                  }`}
+                >
+                  미정
+                </button>
               </div>
             </div>
             <p className="max-w-md text-right text-xs leading-relaxed text-[var(--text-muted)]">
               행사 카드의{"\u00A0\u00A0"}
-              <span className="text-sm font-semibold text-[var(--primary)]">주차지원 O/X</span>
+              <span className="text-sm font-semibold text-[var(--primary)]">주차지원 O/X/미정</span>
               {"\u00A0\u00A0"}를 누르면 주차지원 여부를 바로 변경할 수 있습니다.
             </p>
           </div>
@@ -656,16 +699,12 @@ export default function HomePage() {
                         <button
                           type="button"
                           title="클릭하여 주차지원 여부 변경"
-                          aria-pressed={p.parking_support}
+                          aria-pressed={p.parking_support === true}
                           disabled={togglingParkingId === p.id}
                           onClick={(e) => void handleToggleParkingSupport(e, p.id, p.parking_support)}
-                          className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60 ${
-                            p.parking_support
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                              : "border-rose-200 bg-rose-50 text-rose-600"
-                          }`}
+                          className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60 ${parkingSupportUi(p.parking_support).className}`}
                         >
-                          주차지원 {p.parking_support ? "O" : "X"}
+                          주차지원 {p.parking_support === null ? "미정" : p.parking_support ? "O" : "X"}
                         </button>
                       </div>
                       <div className="flex items-center gap-2">
@@ -790,16 +829,16 @@ export default function HomePage() {
           <summary className="cursor-pointer text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text)]">
             보관함 전체 목록 (삭제 등)
           </summary>
-          <div className="card card-hover mt-4 overflow-hidden">
-            <table className="w-full text-left text-sm">
+          <div className="card card-hover mt-4 overflow-visible">
+            <table className="w-full table-fixed text-left text-sm">
               <thead>
                 <tr className="text-[var(--text-muted)]">
-                  <th className="px-6 py-4 font-medium text-[var(--text)]">기관명</th>
-                  <th className="px-6 py-4 font-medium text-[var(--text)]">담당자</th>
-                  <th className="px-6 py-4 font-medium text-[var(--text)]">사용 일자</th>
-                  <th className="px-6 py-4 font-medium text-[var(--text)]">주차지원</th>
-                  <th className="px-6 py-4 font-medium text-[var(--text)]">비고</th>
-                  <th className="px-6 py-4 font-medium text-[var(--text)]">작업</th>
+                  <th className="w-[22%] px-3 py-4 font-medium text-[var(--text)] sm:px-6">기관명</th>
+                  <th className="w-[14%] px-3 py-4 font-medium text-[var(--text)] sm:px-6">담당자</th>
+                  <th className="w-[22%] px-3 py-4 font-medium text-[var(--text)] sm:px-6">사용 일자</th>
+                  <th className="w-[12%] px-3 py-4 font-medium text-[var(--text)] sm:px-6">주차지원</th>
+                  <th className="w-[16%] px-3 py-4 font-medium text-[var(--text)] sm:px-6">비고</th>
+                  <th className="w-[14%] px-3 py-4 font-medium text-[var(--text)] whitespace-nowrap sm:px-6">작업</th>
                 </tr>
               </thead>
               <tbody>
@@ -820,21 +859,33 @@ export default function HomePage() {
                     }`}
                     aria-label={`${p.org_name} 행사 선택 — 상세로 이동`}
                   >
-                    <td className="px-6 py-4 font-medium text-[var(--text)]">{p.org_name}</td>
-                    <td className="px-6 py-4 text-[var(--text-muted)]">{p.manager}</td>
-                    <td className="px-6 py-4 text-[var(--text-muted)]">
+                    <td className="px-3 py-4 font-medium text-[var(--text)] sm:px-6">
+                      <span className="block truncate">{p.org_name}</span>
+                    </td>
+                    <td className="px-3 py-4 text-[var(--text-muted)] sm:px-6">
+                      <span className="block truncate">{p.manager}</span>
+                    </td>
+                    <td className="px-3 py-4 text-[var(--text-muted)] sm:px-6">
+                      <span className="block truncate">
                       {periodLabelById[p.id]?.full ??
                         (p.start_date === p.end_date ? p.start_date : `${p.start_date} ~ ${p.end_date}`)}
+                      </span>
                     </td>
-                    <td className="px-6 py-4">
-                      <Badge variant={p.parking_support ? "success" : "destructive"}>
-                        {p.parking_support ? "O" : "X"}
+                    <td className="px-3 py-4 sm:px-6">
+                      <Badge
+                        variant={p.parking_support === true ? "success" : p.parking_support === false ? "destructive" : "secondary"}
+                        className={
+                          p.parking_support == null ? "bg-amber-50 text-amber-700 border-amber-200" : undefined
+                        }
+                      >
+                        {p.parking_support === null ? "미정" : p.parking_support ? "O" : "X"}
                       </Badge>
                     </td>
-                    <td className="max-w-[140px] truncate px-6 py-4 text-[var(--text-muted)]">{p.remarks || "—"}</td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-3">
+                    <td className="px-3 py-4 text-[var(--text-muted)] sm:px-6">
+                      <span className="block truncate">{p.remarks || "—"}</span>
+                    </td>
+                    <td className="px-3 py-4 whitespace-nowrap sm:px-6">
+                      <div className="flex items-center justify-end gap-3">
                           <Link
                             href={`/projects/${p.id}/report`}
                             className="inline-flex items-center gap-1.5 text-[var(--primary)] hover:underline"
@@ -843,25 +894,60 @@ export default function HomePage() {
                             <FileText className="h-3.5 w-3.5" />
                             보고서
                           </Link>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteProject(p.id);
-                            }}
-                            disabled={deletingId === p.id}
-                            className="inline-flex items-center gap-1.5 text-red-600 hover:underline disabled:opacity-50"
+                          <div
+                            className="relative"
+                            data-action-menu-root
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            보관함에서 삭제
-                          </button>
-                        </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setActionMenuProjectId((prev) => (prev === p.id ? null : p.id))
+                              }
+                              className="btn inline-flex items-center justify-center px-2.5 py-1.5 text-sm"
+                              aria-label="추가 작업"
+                              aria-haspopup="menu"
+                              aria-expanded={actionMenuProjectId === p.id}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </button>
+                            {actionMenuProjectId === p.id && (
+                              <div
+                                role="menu"
+                                className="absolute right-0 top-[calc(100%+0.4rem)] z-40 min-w-[140px] rounded-xl border border-[var(--border)] bg-white p-1.5 shadow-lg"
+                              >
+                                <Link
+                                  href={`/projects/${p.id}/edit`}
+                                  role="menuitem"
+                                  title="기본 정보·일정·날짜별 룸을 함께 수정"
+                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-[var(--text)] hover:bg-[var(--bg)]"
+                                  onClick={() => setActionMenuProjectId(null)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                  수정
+                                </Link>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    void handleDeleteProject(p.id);
+                                    setActionMenuProjectId(null);
+                                  }}
+                                  disabled={deletingId === p.id}
+                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  {deletingId === p.id ? "삭제 중..." : "삭제"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
           </div>
         </details>
         )}

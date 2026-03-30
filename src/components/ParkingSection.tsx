@@ -192,8 +192,21 @@ export function ParkingSection({ projectId, date, project }: Props) {
             <span className="text-sm font-normal text-[var(--text-muted)]">/ {project.manager}</span>
           </p>
           <div className="flex flex-wrap gap-6 text-sm items-center">
-            <Badge variant={project.parking_support ? "success" : "destructive"}>
-              주차지원 {project.parking_support ? "O" : "X"}
+            <Badge
+              variant={
+                project.parking_support === true
+                  ? "success"
+                  : project.parking_support === false
+                    ? "destructive"
+                    : "secondary"
+              }
+              className={
+                project.parking_support == null
+                  ? "bg-amber-50 text-amber-700 border-amber-200"
+                  : undefined
+              }
+            >
+              주차지원 {project.parking_support === null ? "미정" : project.parking_support ? "O" : "X"}
             </Badge>
             {project.remarks && (
               <p className="font-semibold text-[var(--text)]">{project.remarks}</p>

@@ -53,25 +53,25 @@ export default function ParkingPageClient() {
   const [project, setProject] = useState<Project | null>(null);
   const [remarksInput, setRemarksInput] = useState("");
   const [remarksSaving, setRemarksSaving] = useState(false);
+  const [remarksEditing, setRemarksEditing] = useState(false);
   const [togglingSupport, setTogglingSupport] = useState(false);
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedRoomName, setSelectedRoomName] = useState<string>("미지정");
   const [roomsSummaryLine, setRoomsSummaryLine] = useState("");
   const [periodLabelLine, setPeriodLabelLine] = useState("");
+  const [dateList, setDateList] = useState<string[]>([]);
   const [rows, setRows] = useState<RowState[]>([]);
   const vehicleRefs = useRef<(HTMLInputElement | null)[]>([]);
   const ticketRefs = useRef<(HTMLInputElement | null)[][]>([]);
 
-  const dateList =
-    project?.start_date && project?.end_date
-      ? getDateRange(project.start_date, project.end_date)
-      : [];
-
   useEffect(() => {
-    if (!dateList.length) return;
-    if (!selectedDate) {
-      const today = new Date().toISOString().slice(0, 10);
-      const defaultDate = dateList.includes(today) ? today : dateList[0];
+    if (!dateList.length) {
+      setSelectedDate("");
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const defaultDate = dateList.includes(today) ? today : dateList[0];
+    if (!selectedDate || !dateList.includes(selectedDate)) {
       setSelectedDate(defaultDate);
     }
   }, [dateList, selectedDate]);
@@ -105,6 +105,15 @@ export default function ParkingPageClient() {
 
     function applyFromRoomRows(rows: { date: string; room_name: string }[]) {
       const sortedDates = Array.from(new Set(rows.map((r) => String(r.date).slice(0, 10)))).sort();
+      // "사용한 날짜만" 보여주기 위해 dateList를 project_rooms에 있는 날짜로 구성합니다.
+      // (rooms가 비어있으면 기존 start_date~end_date fallback)
+      setDateList(
+        sortedDates.length > 0
+          ? sortedDates
+          : proj.start_date && proj.end_date
+            ? getDateRange(proj.start_date, proj.end_date)
+            : []
+      );
       const period =
         sortedDates.length > 0
           ? periodLabelMonthDayFromSortedYmd(sortedDates)
@@ -160,7 +169,7 @@ export default function ParkingPageClient() {
 
   const handleToggleParkingSupport = useCallback(async () => {
     if (!project || togglingSupport) return;
-    const next = !project.parking_support;
+    const next = project.parking_support === true ? false : project.parking_support === false ? null : true;
     setTogglingSupport(true);
     try {
       if (isDevMode()) {
@@ -462,39 +471,87 @@ export default function ParkingPageClient() {
                   <button
                     type="button"
                     title="클릭하여 주차지원 여부 변경"
-                    aria-pressed={project.parking_support}
-                    aria-label={project.parking_support ? "주차지원 함" : "주차지원 안 함"}
+                    aria-pressed={project.parking_support === true}
+                    aria-label={
+                      project.parking_support === true
+                        ? "주차지원 함"
+                        : project.parking_support === false
+                          ? "주차지원 안 함"
+                          : "주차지원 미정"
+                    }
                     aria-describedby="parking-support-hint"
                     disabled={togglingSupport}
                     onClick={() => void handleToggleParkingSupport()}
                     className={`inline-flex h-10 min-w-[3rem] shrink-0 items-center justify-center rounded-full border px-4 text-base font-bold tabular-nums transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60 ${
-                      project.parking_support
+                      project.parking_support === true
                         ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                        : "border-rose-200 bg-rose-50 text-rose-600"
+                        : project.parking_support === false
+                          ? "border-rose-200 bg-rose-50 text-rose-600"
+                          : "border-amber-200 bg-amber-50 text-amber-700"
                     }`}
                   >
-                    {project.parking_support ? "O" : "X"}
+                    {project.parking_support === null ? "미정" : project.parking_support ? "O" : "X"}
                   </button>
                 </div>
                 <p id="parking-support-hint" className="text-sm leading-snug text-[var(--text-muted)]">
                   버튼을 눌러 주차지원 여부를 변경할 수 있습니다.
                 </p>
               </div>
-              <div className="flex w-full min-w-0 items-center gap-4">
-                <label htmlFor="parking-remarks" className="shrink-0 text-base font-semibold text-[var(--text)]">
+              <div className="flex w-full min-w-0 items-center gap-3">
+                <label
+                  htmlFor="parking-remarks"
+                  className="shrink-0 text-base font-semibold leading-none text-[var(--text)]"
+                >
                   비고
                 </label>
-                <input
-                  id="parking-remarks"
-                  type="text"
-                  value={remarksInput}
-                  onChange={(e) => setRemarksInput(e.target.value)}
-                  onBlur={() => void saveRemarks()}
+
+                <div className="min-w-0 flex-1">
+                  {!remarksEditing ? (
+                    (() => {
+                      const trimmed = remarksInput.trim();
+                      if (!trimmed) return null;
+                      return (
+                        <p
+                          className="line-clamp-3 break-words whitespace-pre-line text-base leading-snug text-[var(--text)]"
+                          title={trimmed}
+                        >
+                          {trimmed}
+                        </p>
+                      );
+                    })()
+                  ) : (
+                    <textarea
+                      id="parking-remarks"
+                      value={remarksInput}
+                      onChange={(e) => setRemarksInput(e.target.value)}
+                      onBlur={() => void saveRemarks()}
+                      disabled={remarksSaving}
+                      rows={3}
+                      className="input min-h-[48px] w-full resize-none px-3 py-2.5 text-base text-[var(--text)] placeholder:text-[var(--text-muted)] disabled:opacity-60"
+                      placeholder="비고 없음"
+                      autoComplete="off"
+                    />
+                  )}
+                </div>
+
+                <button
+                  type="button"
                   disabled={remarksSaving}
-                  className="input min-w-0 flex-1 px-3 py-2.5 text-base text-[var(--text)] placeholder:text-[var(--text-muted)] disabled:opacity-60"
-                  placeholder="비고 없음"
-                  autoComplete="off"
-                />
+                  onClick={() => {
+                    if (!project) return;
+                    if (remarksEditing) {
+                      void (async () => {
+                        await saveRemarks();
+                        setRemarksEditing(false);
+                      })();
+                    } else {
+                      setRemarksEditing(true);
+                    }
+                  }}
+                  className="btn inline-flex h-10 shrink-0 items-center gap-2 px-3 text-sm"
+                >
+                  {remarksEditing ? "완료" : "수정"}
+                </button>
               </div>
             </div>
           </div>

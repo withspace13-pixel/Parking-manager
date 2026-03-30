@@ -64,7 +64,7 @@ export default function NewProjectPage() {
     return [{ start: t, end: t }];
   });
   const [includeWeekends, setIncludeWeekends] = useState(false);
-  const [parking_support, setParkingSupport] = useState(false);
+  const [parking_support, setParkingSupport] = useState<boolean | null>(false);
   const [remarks, setRemarks] = useState("");
   const [roomByDate, setRoomByDate] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -82,19 +82,30 @@ export default function NewProjectPage() {
       .filter((r) => isDateStr(r.start) && isDateStr(r.end) && r.start <= r.end);
   })();
 
-  const dateList = (() => {
+  const allDateList = (() => {
     const set = new Set<string>();
     normalizedRanges.forEach((r) => {
       getDateRange(r.start, r.end).forEach((d) => set.add(d));
     });
-    const all = Array.from(set).sort();
-    if (includeWeekends) return all;
-    return all.filter((ymd) => {
-      const [y, m, d] = ymd.split("-").map(Number);
-      const day = new Date(y, m - 1, d).getDay();
-      return day !== 0 && day !== 6;
-    });
+    return Array.from(set).sort();
   })();
+
+  const weekdayDateList = allDateList.filter((ymd) => {
+    const [y, m, d] = ymd.split("-").map(Number);
+    const day = new Date(y, m - 1, d).getDay();
+    return day !== 0 && day !== 6;
+  });
+
+  const dateList = includeWeekends ? allDateList : weekdayDateList;
+
+  // 주말만 선택한 경우 dateList가 0이 되어 룸 등록 UI가 사라지므로,
+  // 사용자가 켜지 않아도 자동으로 주말 포함을 켜서 작업 가능하게 합니다.
+  useEffect(() => {
+    if (!includeWeekends && weekdayDateList.length === 0 && allDateList.length > 0) {
+      setIncludeWeekends(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [includeWeekends, ranges]);
 
   const rangesLabel = (() => {
     if (dateList.length === 0) return "";
@@ -115,7 +126,19 @@ export default function NewProjectPage() {
   const updateRange = (idx: number, key: "start" | "end", value: string) => {
     const v = value.slice(0, 10);
     setRanges((prev) => {
-      const next = prev.map((r, i) => (i === idx ? { ...r, [key]: v } : r));
+      const next = prev.map((r, i) => {
+        if (i !== idx) return r;
+        if (key === "start") {
+          // 시작일이 종료일보다 뒤로 가면 종료일을 시작일로 맞춤
+          const nextStart = v;
+          const nextEnd = r.end && r.end < nextStart ? nextStart : r.end;
+          return { ...r, start: nextStart, end: nextEnd };
+        }
+        // key === "end"
+        const nextEnd = v;
+        const nextStart = r.start && r.start > nextEnd ? nextEnd : r.start;
+        return { ...r, start: nextStart, end: nextEnd };
+      });
       return next;
     });
   };
@@ -424,12 +447,34 @@ export default function NewProjectPage() {
                 <span className="mb-2 block text-sm font-medium text-[var(--text)]">주차지원 여부</span>
                 <div className="flex gap-6">
                   <label className="flex cursor-pointer items-center gap-2 text-[var(--text-muted)]">
-                    <input type="radio" name="parking_support" checked={parking_support === true} onChange={() => setParkingSupport(true)} className="accent-[var(--primary)]" />
+                    <input
+                      type="radio"
+                      name="parking_support"
+                      checked={parking_support === true}
+                      onChange={() => setParkingSupport(true)}
+                      className="accent-[var(--primary)]"
+                    />
                     <span className="font-medium">O (지원함)</span>
                   </label>
                   <label className="flex cursor-pointer items-center gap-2 text-[var(--text-muted)]">
-                    <input type="radio" name="parking_support" checked={parking_support === false} onChange={() => setParkingSupport(false)} className="accent-[var(--primary)]" />
+                    <input
+                      type="radio"
+                      name="parking_support"
+                      checked={parking_support === false}
+                      onChange={() => setParkingSupport(false)}
+                      className="accent-[var(--primary)]"
+                    />
                     <span>X (지원 안 함)</span>
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-[var(--text-muted)]">
+                    <input
+                      type="radio"
+                      name="parking_support"
+                      checked={parking_support === null}
+                      onChange={() => setParkingSupport(null)}
+                      className="accent-[var(--primary)]"
+                    />
+                    <span>미정</span>
                   </label>
                 </div>
               </div>

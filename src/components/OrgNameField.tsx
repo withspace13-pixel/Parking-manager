@@ -90,6 +90,11 @@ export function OrgNameField({ value, onChange, candidates, placeholder, disable
             const sel = filtered[hl] ?? filtered[0];
             if (sel) pick(sel);
           }
+          if (e.key === "Tab") {
+            // Tab은 기본 동작(다음 칸 이동)을 그대로 두고,
+            // 자동완성 목록만 닫습니다.
+            setOpen(false);
+          }
         }}
         className="input w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
         placeholder={placeholder}
