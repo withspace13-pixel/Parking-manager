@@ -299,10 +299,12 @@ export default function SettlementPageClient() {
       (acc, r) => {
         const isFree = freeRecordIdSet.has(r.id);
         const amount = isFree ? 0 : calcAmount(r);
-        acc.all_day_cnt += r.all_day_cnt;
-        acc["2h_cnt"] += r["2h_cnt"];
-        acc["1h_cnt"] += r["1h_cnt"];
-        acc["30m_cnt"] += r["30m_cnt"];
+        if (!isFree) {
+          acc.all_day_cnt += r.all_day_cnt;
+          acc["2h_cnt"] += r["2h_cnt"];
+          acc["1h_cnt"] += r["1h_cnt"];
+          acc["30m_cnt"] += r["30m_cnt"];
+        }
         acc.amount += amount;
         return acc;
       },
@@ -448,6 +450,24 @@ export default function SettlementPageClient() {
             <span className="inline-flex items-center rounded-full bg-amber-50 px-4 py-1.5 text-base font-extrabold text-amber-700">
               총 {usageDaysCount}일 사용
             </span>
+          </div>
+          <div className="mt-6 flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[#F8FAFC] px-4 py-2.5 sm:flex-row sm:items-start sm:justify-between sm:gap-8 sm:px-5 sm:py-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                발급 수량 합계 (1일 1대 무료 제외)
+              </p>
+              <p className="mt-3.5 text-base font-semibold leading-snug text-[var(--text)]">
+                {`종일권 ${totals.all_day_cnt}매, 2시간권 ${totals["2h_cnt"]}매, 1시간권 ${totals["1h_cnt"]}매, 30분권 ${totals["30m_cnt"]}매`}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-col sm:min-w-[200px] sm:text-right">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                총 정산 금액 (무료 건 제외)
+              </p>
+              <p className="mt-3.5 text-base font-semibold leading-snug text-[var(--text)]">
+                {totals.amount.toLocaleString()}원
+              </p>
+            </div>
           </div>
         </div>
 

@@ -17,12 +17,6 @@
       "static/chunks/_app-pages-browser_node_modules_html2canvas_dist_html2canvas_js.js"
     ]
   },
-  "app\\projects\\[id]\\report\\ReportPageClient.tsx -> @/lib/parking-history-pdf": {
-    "id": "app\\projects\\[id]\\report\\ReportPageClient.tsx -> @/lib/parking-history-pdf",
-    "files": [
-      "static/chunks/_app-pages-browser_src_lib_parking-history-pdf_ts.js"
-    ]
-  },
   "app\\projects\\[id]\\settlement\\SettlementPageClient.tsx -> @/lib/parking-history-pdf": {
     "id": "app\\projects\\[id]\\settlement\\SettlementPageClient.tsx -> @/lib/parking-history-pdf",
     "files": [
