@@ -21,10 +21,15 @@
       "static/chunks/main-app.js",
       "static/chunks/app/error.js"
     ],
-    "/projects/[id]/settlement/page": [
+    "/projects/new/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/projects/[id]/settlement/page.js"
+      "static/chunks/app/projects/new/page.js"
+    ],
+    "/projects/[id]/parking/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/projects/[id]/parking/page.js"
     ]
   }
 }

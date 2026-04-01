@@ -30,6 +30,22 @@ import {
 import { isArchivedProjectExpiredForPurge } from "@/lib/archive-retention";
 import { ParkingSection } from "@/components/ParkingSection";
 import { Badge } from "@/components/ui/Badge";
+import {
+  cycleParkingSupport,
+  parseParkingSupport,
+  parkingSupportBadgeClass,
+  parkingSupportBadgeVariant,
+  parkingSupportShortLabel,
+  parkingSupportUiClass,
+  type ParkingSupport,
+} from "@/lib/parking-support";
+
+function normalizeProjectsFromApi(list: Project[]): Project[] {
+  return list.map((p) => ({
+    ...p,
+    parking_support: parseParkingSupport(p.parking_support as unknown),
+  }));
+}
 
 function todayString() {
   const d = new Date();
@@ -58,7 +74,9 @@ export default function HomePage() {
   const router = useRouter();
   const [today] = useState(() => todayString());
   const [listMode, setListMode] = useState<"active" | "archive">("active");
-  const [supportFilter, setSupportFilter] = useState<"all" | "onlySupport" | "onlyNoSupport" | "onlyUnknown">("all");
+  const [supportFilter, setSupportFilter] = useState<
+    "all" | "onlySupport" | "onlyNoSupport" | "onlyUnknown" | "onlyNeedsCheck"
+  >("all");
   const [selectedDate, setSelectedDate] = useState(today);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
@@ -92,7 +110,7 @@ export default function HomePage() {
           .from("projects")
           .select("*")
           .order("start_date", { ascending: false });
-        if (!error) setAllProjects(data || []);
+        if (!error) setAllProjects(normalizeProjectsFromApi((data || []) as Project[]));
       } finally {
         setLoading(false);
       }
@@ -129,7 +147,7 @@ export default function HomePage() {
         return;
       }
       const { data } = await supabase.from("projects").select("*").order("start_date", { ascending: false });
-      setAllProjects(data || []);
+      setAllProjects(normalizeProjectsFromApi((data || []) as Project[]));
       setSelectedProjectId((prev) => (prev && ids.includes(prev) ? null : prev));
     })();
   }, [allProjects, today, loading, devStore.data]);
@@ -281,9 +299,12 @@ export default function HomePage() {
   const projectsForDateWithFilter = useMemo(() => {
     if (supportFilter === "all") return projectsForDate;
     return projectsForDate.filter((p) => {
-      if (supportFilter === "onlySupport") return p.parking_support === true;
-      if (supportFilter === "onlyNoSupport") return p.parking_support === false;
-      return p.parking_support == null;
+      const s = parseParkingSupport(p.parking_support as unknown);
+      if (supportFilter === "onlySupport") return s === "yes";
+      if (supportFilter === "onlyNoSupport") return s === "no";
+      if (supportFilter === "onlyUnknown") return s === "undecided";
+      if (supportFilter === "onlyNeedsCheck") return s === "needs_check";
+      return true;
     });
   }, [projectsForDate, supportFilter]);
 
@@ -373,7 +394,7 @@ export default function HomePage() {
       } else {
         await supabase.from("projects").delete().eq("id", projectId);
         const { data } = await supabase.from("projects").select("*").order("start_date", { ascending: false });
-        setAllProjects(data || []);
+        setAllProjects(normalizeProjectsFromApi((data || []) as Project[]));
       }
       setSelectedProjectId(null);
     } finally {
@@ -381,21 +402,15 @@ export default function HomePage() {
     }
   };
 
-  const parkingSupportUi = (v: Project["parking_support"]) => {
-    if (v === true) return { label: "O", variant: "success" as const, className: "border-emerald-200 bg-emerald-50 text-emerald-700" };
-    if (v === false) return { label: "X", variant: "destructive" as const, className: "border-rose-200 bg-rose-50 text-rose-600" };
-    return { label: "미정", variant: "secondary" as const, className: "border-amber-200 bg-amber-50 text-amber-700" };
-  };
-
   const handleToggleParkingSupport = async (
     e: ReactMouseEvent<HTMLButtonElement>,
     projectId: string,
-    current: Project["parking_support"]
+    current: Project["parking_support"] | unknown
   ) => {
     e.stopPropagation();
     e.preventDefault();
     if (togglingParkingId === projectId) return;
-    const next = current === true ? false : current === false ? null : true;
+    const next: ParkingSupport = cycleParkingSupport(parseParkingSupport(current));
     setTogglingParkingId(projectId);
     try {
       if (isDevMode()) {
@@ -538,13 +553,26 @@ export default function HomePage() {
                 >
                   미정
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setSupportFilter("onlyNeedsCheck")}
+                  className={`rounded-full px-2 py-0.5 ${
+                    supportFilter === "onlyNeedsCheck"
+                      ? "bg-white text-[var(--text)] shadow-sm"
+                      : "text-[var(--text-muted)]"
+                  }`}
+                >
+                  확인
+                </button>
               </div>
             </div>
-            <p className="max-w-md text-right text-xs leading-relaxed text-[var(--text-muted)]">
-              행사 카드의{"\u00A0\u00A0"}
-              <span className="text-sm font-semibold text-[var(--primary)]">주차지원 O/X/미정</span>
-              {"\u00A0\u00A0"}를 누르면 주차지원 여부를 바로 변경할 수 있습니다.
-            </p>
+            <div className="w-full max-w-full overflow-x-auto">
+              <p className="whitespace-nowrap text-right text-xs leading-relaxed text-[var(--text-muted)]">
+                행사 카드의{"\u00A0\u00A0"}
+                <span className="text-sm font-semibold text-[var(--primary)]">주차지원 O/X/미정/확인 필요</span>
+                {"\u00A0\u00A0"}를 누르면 주차지원 여부를 바로 변경할 수 있습니다.
+              </p>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-6">
             <div className="flex items-center gap-3">
@@ -699,12 +727,12 @@ export default function HomePage() {
                         <button
                           type="button"
                           title="클릭하여 주차지원 여부 변경"
-                          aria-pressed={p.parking_support === true}
+                          aria-pressed={parseParkingSupport(p.parking_support as unknown) === "yes"}
                           disabled={togglingParkingId === p.id}
                           onClick={(e) => void handleToggleParkingSupport(e, p.id, p.parking_support)}
-                          className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60 ${parkingSupportUi(p.parking_support).className}`}
+                          className={`inline-flex max-w-[11rem] flex-wrap items-center justify-center rounded-full border px-2.5 py-1 text-xs font-semibold transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60 ${parkingSupportUiClass(parseParkingSupport(p.parking_support as unknown))}`}
                         >
-                          주차지원 {p.parking_support === null ? "미정" : p.parking_support ? "O" : "X"}
+                          주차지원 {parkingSupportShortLabel(parseParkingSupport(p.parking_support as unknown))}
                         </button>
                       </div>
                       <div className="flex items-center gap-2">
@@ -872,14 +900,14 @@ export default function HomePage() {
                       </span>
                     </td>
                     <td className="px-3 py-4 sm:px-6">
-                      <Badge
-                        variant={p.parking_support === true ? "success" : p.parking_support === false ? "destructive" : "secondary"}
-                        className={
-                          p.parking_support == null ? "bg-amber-50 text-amber-700 border-amber-200" : undefined
-                        }
-                      >
-                        {p.parking_support === null ? "미정" : p.parking_support ? "O" : "X"}
-                      </Badge>
+                      {(() => {
+                        const s = parseParkingSupport(p.parking_support as unknown);
+                        return (
+                          <Badge variant={parkingSupportBadgeVariant(s)} className={parkingSupportBadgeClass(s)}>
+                            {parkingSupportShortLabel(s)}
+                          </Badge>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-4 text-[var(--text-muted)] sm:px-6">
                       <span className="block truncate">{p.remarks || "—"}</span>

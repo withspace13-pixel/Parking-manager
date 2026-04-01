@@ -10,6 +10,9 @@ export const supabase: SupabaseClient = createClient(
   supabaseAnonKey || "placeholder"
 );
 
+/** @see parseParkingSupport in @/lib/parking-support */
+export type ParkingSupport = "yes" | "no" | "undecided" | "needs_check";
+
 export type Project = {
   id: string;
   org_name: string;
@@ -17,7 +20,7 @@ export type Project = {
   event_name?: string | null;
   start_date: string;
   end_date: string;
-  parking_support: boolean | null;
+  parking_support: ParkingSupport;
   remarks: string | null;
   created_at?: string;
   updated_at?: string;

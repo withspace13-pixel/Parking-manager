@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { ParkingRecord, Project, ProjectRoom } from "./supabase";
 import { DEV_STORAGE_KEY } from "./dev-mode";
+import { parseParkingSupport } from "./parking-support";
 
 type DevData = {
   projects: Project[];
@@ -23,8 +24,12 @@ function loadFromStorage(): DevData {
     const raw = localStorage.getItem(DEV_STORAGE_KEY);
     if (!raw) return { projects: [], project_rooms: [], parking_records: [] };
     const parsed = JSON.parse(raw) as DevData;
+    const projects = (parsed.projects ?? []).map((p) => ({
+      ...p,
+      parking_support: parseParkingSupport((p as Project).parking_support as unknown),
+    }));
     return {
-      projects: parsed.projects ?? [],
+      projects,
       project_rooms: parsed.project_rooms ?? [],
       parking_records: parsed.parking_records ?? [],
     };
@@ -102,7 +107,11 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
 
   const createProject = useCallback(
     (input: Omit<Project, "id">, roomList?: { date: string; room_name: string }[]) => {
-      const project: Project = { ...input, id: uuid() };
+      const project: Project = {
+        ...input,
+        id: uuid(),
+        parking_support: parseParkingSupport(input.parking_support as unknown),
+      };
       const rooms: ProjectRoom[] = (roomList ?? []).map((r) => ({
         id: uuid(),
         project_id: project.id,
@@ -122,11 +131,13 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
 
   const updateProject = useCallback(
     (id: string, input: Partial<Omit<Project, "id">>) => {
+      const patch = { ...input };
+      if ("parking_support" in patch && patch.parking_support !== undefined) {
+        patch.parking_support = parseParkingSupport(patch.parking_support as unknown);
+      }
       const next = {
         ...data,
-        projects: (data.projects ?? []).map((p) =>
-          p.id === id ? { ...p, ...input } : p
-        ),
+        projects: (data.projects ?? []).map((p) => (p.id === id ? { ...p, ...patch } : p)),
       };
       save(next);
     },

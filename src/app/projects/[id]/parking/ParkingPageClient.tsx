@@ -8,6 +8,12 @@ import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
 import type { Project, ParkingRecord } from "@/lib/supabase";
+import {
+  cycleParkingSupport,
+  parseParkingSupport,
+  parkingSupportShortLabel,
+  parkingSupportUiClass,
+} from "@/lib/parking-support";
 import { formatMonthDaySlash, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
 
 function fallbackPeriodFromProject(p: Project): string {
@@ -158,7 +164,10 @@ export default function ParkingPageClient() {
         .select("*")
         .eq("id", projectId)
         .single();
-      if (!error && data) setProject(data as Project);
+      if (!error && data) {
+        const row = data as Project;
+        setProject({ ...row, parking_support: parseParkingSupport(row.parking_support as unknown) });
+      }
     }
     loadProject();
   }, [projectId, devStore.data]);
@@ -169,7 +178,7 @@ export default function ParkingPageClient() {
 
   const handleToggleParkingSupport = useCallback(async () => {
     if (!project || togglingSupport) return;
-    const next = project.parking_support === true ? false : project.parking_support === false ? null : true;
+    const next = cycleParkingSupport(parseParkingSupport(project.parking_support as unknown));
     setTogglingSupport(true);
     try {
       if (isDevMode()) {
@@ -471,26 +480,20 @@ export default function ParkingPageClient() {
                   <button
                     type="button"
                     title="클릭하여 주차지원 여부 변경"
-                    aria-pressed={project.parking_support === true}
-                    aria-label={
-                      project.parking_support === true
-                        ? "주차지원 함"
-                        : project.parking_support === false
-                          ? "주차지원 안 함"
-                          : "주차지원 미정"
-                    }
+                    aria-pressed={parseParkingSupport(project.parking_support as unknown) === "yes"}
+                    aria-label={(() => {
+                      const s = parseParkingSupport(project.parking_support as unknown);
+                      if (s === "yes") return "주차지원 함";
+                      if (s === "no") return "주차지원 안 함";
+                      if (s === "undecided") return "주차지원 미정";
+                      return "주차지원 확인 필요";
+                    })()}
                     aria-describedby="parking-support-hint"
                     disabled={togglingSupport}
                     onClick={() => void handleToggleParkingSupport()}
-                    className={`inline-flex h-10 min-w-[3rem] shrink-0 items-center justify-center rounded-full border px-4 text-base font-bold tabular-nums transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60 ${
-                      project.parking_support === true
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                        : project.parking_support === false
-                          ? "border-rose-200 bg-rose-50 text-rose-600"
-                          : "border-amber-200 bg-amber-50 text-amber-700"
-                    }`}
+                    className={`inline-flex h-auto min-h-10 min-w-[3rem] max-w-[10rem] shrink-0 items-center justify-center rounded-full border px-3 py-2 text-sm font-bold leading-tight transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60 sm:text-base ${parkingSupportUiClass(parseParkingSupport(project.parking_support as unknown))}`}
                   >
-                    {project.parking_support === null ? "미정" : project.parking_support ? "O" : "X"}
+                    {parkingSupportShortLabel(parseParkingSupport(project.parking_support as unknown))}
                   </button>
                 </div>
                 <p id="parking-support-hint" className="text-sm leading-snug text-[var(--text-muted)]">

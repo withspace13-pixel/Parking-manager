@@ -5,6 +5,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Calculator, Pencil, Plus, Trash2 } from "lucide-react";
 import { useDevStore } from "@/lib/dev-store";
 import type { Project, ParkingRecord } from "@/lib/supabase";
+import {
+  parseParkingSupport,
+  parkingSupportBadgeClass,
+  parkingSupportBadgeVariant,
+  parkingSupportShortLabel,
+} from "@/lib/parking-support";
 import { Badge } from "@/components/ui/Badge";
 
 const TICKET_KEYS = ["all_day_cnt", "2h_cnt", "1h_cnt", "30m_cnt"] as const;
@@ -193,20 +199,10 @@ export function ParkingSection({ projectId, date, project }: Props) {
           </p>
           <div className="flex flex-wrap gap-6 text-sm items-center">
             <Badge
-              variant={
-                project.parking_support === true
-                  ? "success"
-                  : project.parking_support === false
-                    ? "destructive"
-                    : "secondary"
-              }
-              className={
-                project.parking_support == null
-                  ? "bg-amber-50 text-amber-700 border-amber-200"
-                  : undefined
-              }
+              variant={parkingSupportBadgeVariant(parseParkingSupport(project.parking_support as unknown))}
+              className={parkingSupportBadgeClass(parseParkingSupport(project.parking_support as unknown))}
             >
-              주차지원 {project.parking_support === null ? "미정" : project.parking_support ? "O" : "X"}
+              주차지원 {parkingSupportShortLabel(parseParkingSupport(project.parking_support as unknown))}
             </Badge>
             {project.remarks && (
               <p className="font-semibold text-[var(--text)]">{project.remarks}</p>

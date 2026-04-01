@@ -7,6 +7,7 @@ import { ArrowLeft, Copy, Home, Save, X } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
+import type { ParkingSupport } from "@/lib/supabase";
 import { datesYmdToFormRanges, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
 import { OrgNameField } from "@/components/OrgNameField";
 import favoriteOrgNamesJson from "@/data/favorite-org-names.json";
@@ -64,7 +65,7 @@ export default function NewProjectPage() {
     return [{ start: t, end: t }];
   });
   const [includeWeekends, setIncludeWeekends] = useState(false);
-  const [parking_support, setParkingSupport] = useState<boolean | null>(false);
+  const [parking_support, setParkingSupport] = useState<ParkingSupport>("no");
   const [remarks, setRemarks] = useState("");
   const [roomByDate, setRoomByDate] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -445,13 +446,13 @@ export default function NewProjectPage() {
               )}
               <div className="sm:col-span-2">
                 <span className="mb-2 block text-sm font-medium text-[var(--text)]">주차지원 여부</span>
-                <div className="flex gap-6">
+                <div className="flex flex-wrap gap-x-6 gap-y-2">
                   <label className="flex cursor-pointer items-center gap-2 text-[var(--text-muted)]">
                     <input
                       type="radio"
                       name="parking_support"
-                      checked={parking_support === true}
-                      onChange={() => setParkingSupport(true)}
+                      checked={parking_support === "yes"}
+                      onChange={() => setParkingSupport("yes")}
                       className="accent-[var(--primary)]"
                     />
                     <span className="font-medium">O (지원함)</span>
@@ -460,8 +461,8 @@ export default function NewProjectPage() {
                     <input
                       type="radio"
                       name="parking_support"
-                      checked={parking_support === false}
-                      onChange={() => setParkingSupport(false)}
+                      checked={parking_support === "no"}
+                      onChange={() => setParkingSupport("no")}
                       className="accent-[var(--primary)]"
                     />
                     <span>X (지원 안 함)</span>
@@ -470,11 +471,21 @@ export default function NewProjectPage() {
                     <input
                       type="radio"
                       name="parking_support"
-                      checked={parking_support === null}
-                      onChange={() => setParkingSupport(null)}
+                      checked={parking_support === "undecided"}
+                      onChange={() => setParkingSupport("undecided")}
                       className="accent-[var(--primary)]"
                     />
                     <span>미정</span>
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-[var(--text-muted)]">
+                    <input
+                      type="radio"
+                      name="parking_support"
+                      checked={parking_support === "needs_check"}
+                      onChange={() => setParkingSupport("needs_check")}
+                      className="accent-[var(--primary)]"
+                    />
+                    <span>확인 필요</span>
                   </label>
                 </div>
               </div>
