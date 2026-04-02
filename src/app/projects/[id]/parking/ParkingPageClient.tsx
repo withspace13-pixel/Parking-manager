@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Calculator, Home, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Calculator, Home, Plus, RefreshCw, Trash2, Wallet } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
@@ -15,6 +15,18 @@ import {
   parkingSupportUiClass,
 } from "@/lib/parking-support";
 import { formatMonthDaySlash, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
+import {
+  isMhpApplyResponse,
+  isMhpCreditResponse,
+  isMhpLookupResponse,
+  postMhpApplyRequest,
+  postMhpCreditRequest,
+  postMhpLookupRequest,
+  splitMhpParkingDisplayText,
+} from "@/lib/mhp-extension";
+
+const MHP_CREDIT_POLL_MS = 40_000;
+const MHP_CREDIT_TIMEOUT_MS = 22_000;
 
 function fallbackPeriodFromProject(p: Project): string {
   const s = String(p.start_date).slice(0, 10);
@@ -41,6 +53,9 @@ type RowState = {
   "1h_cnt": number;
   "30m_cnt": number;
   recordId?: string;
+  /** MHP 콘솔 조회 결과(화면 전용, DB 미저장) */
+  mhp_entry_at?: string;
+  mhp_parking_duration?: string;
 };
 
 const TICKET_KEYS = ["all_day_cnt", "2h_cnt", "1h_cnt", "30m_cnt"] as const;
@@ -69,6 +84,15 @@ export default function ParkingPageClient() {
   const [rows, setRows] = useState<RowState[]>([]);
   const vehicleRefs = useRef<(HTMLInputElement | null)[]>([]);
   const ticketRefs = useRef<(HTMLInputElement | null)[][]>([]);
+  const mhpPendingRef = useRef<{ requestId: string; index: number; vehicleNum: string } | null>(null);
+  const mhpApplyPendingRef = useRef<{ requestId: string; index: number } | null>(null);
+  const mhpCreditPendingRef = useRef<string | null>(null);
+  const refreshMhpCreditRef = useRef<() => void>(() => {});
+  const [mhpLoadingIndex, setMhpLoadingIndex] = useState<number | null>(null);
+  const [mhpApplyLoadingIndex, setMhpApplyLoadingIndex] = useState<number | null>(null);
+  const [mhpCreditDisplay, setMhpCreditDisplay] = useState<string | null>(null);
+  const [mhpCreditError, setMhpCreditError] = useState<string | null>(null);
+  const [mhpCreditLoading, setMhpCreditLoading] = useState(false);
 
   useEffect(() => {
     if (!dateList.length) {
@@ -273,6 +297,177 @@ export default function ParkingPageClient() {
     if (selectedDate) loadRecords(selectedDate);
   }, [selectedDate, loadRecords]);
 
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.source !== window || !isMhpLookupResponse(e.data)) return;
+      const pending = mhpPendingRef.current;
+      if (!pending || e.data.requestId !== pending.requestId) return;
+      const { index: rowIndex, vehicleNum: expectedV } = pending;
+      mhpPendingRef.current = null;
+      setMhpLoadingIndex(null);
+
+      const rowVehicleOk = (v: string) =>
+        String(v ?? "")
+          .replace(/\D/g, "")
+          .slice(0, 4) === expectedV;
+
+      if (e.data.ok && (e.data.parkingTimeText ?? "").trim()) {
+        const text = (e.data.parkingTimeText ?? "").trim();
+        const { entryAt, duration } = splitMhpParkingDisplayText(text);
+        setRows((prev) => {
+          const row = prev[rowIndex];
+          if (!row || !rowVehicleOk(row.vehicle_num)) return prev;
+          return prev.map((r, i) =>
+            i === rowIndex ? { ...r, mhp_entry_at: entryAt, mhp_parking_duration: duration } : r
+          );
+        });
+      } else {
+        setRows((prev) => {
+          const row = prev[rowIndex];
+          if (!row || !rowVehicleOk(row.vehicle_num)) return prev;
+          return prev.map((r, i) =>
+            i === rowIndex ? { ...r, mhp_entry_at: undefined, mhp_parking_duration: undefined } : r
+          );
+        });
+        alert(e.data.error?.trim() || "MHP 조회에 실패했습니다.");
+      }
+    };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, []);
+
+  useEffect(() => {
+    const onApplyMsg = (e: MessageEvent) => {
+      if (e.source !== window || !isMhpApplyResponse(e.data)) return;
+      const pending = mhpApplyPendingRef.current;
+      if (!pending || e.data.requestId !== pending.requestId) return;
+      mhpApplyPendingRef.current = null;
+      setMhpApplyLoadingIndex(null);
+      if (e.data.ok) {
+        alert((e.data.detail || "MHP에 할인 적용을 요청했습니다.").trim());
+        refreshMhpCreditRef.current();
+      } else {
+        alert(e.data.error?.trim() || "MHP 등록에 실패했습니다.");
+      }
+    };
+    window.addEventListener("message", onApplyMsg);
+    return () => window.removeEventListener("message", onApplyMsg);
+  }, []);
+
+  const requestMhpCredit = useCallback(() => {
+    const requestId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `mhp-credit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    mhpCreditPendingRef.current = requestId;
+    setMhpCreditLoading(true);
+    postMhpCreditRequest(requestId);
+    window.setTimeout(() => {
+      if (mhpCreditPendingRef.current !== requestId) return;
+      mhpCreditPendingRef.current = null;
+      setMhpCreditLoading(false);
+      setMhpCreditError("크레딧 응답이 없습니다. MHP 탭·확장을 확인하세요.");
+    }, MHP_CREDIT_TIMEOUT_MS);
+  }, []);
+
+  useEffect(() => {
+    refreshMhpCreditRef.current = requestMhpCredit;
+  }, [requestMhpCredit]);
+
+  useEffect(() => {
+    const onCredit = (e: MessageEvent) => {
+      if (e.source !== window || !isMhpCreditResponse(e.data)) return;
+      if (mhpCreditPendingRef.current !== e.data.requestId) return;
+      mhpCreditPendingRef.current = null;
+      setMhpCreditLoading(false);
+      if (e.data.ok && (e.data.creditText ?? "").trim()) {
+        setMhpCreditDisplay((e.data.creditText ?? "").trim());
+        setMhpCreditError(null);
+      } else {
+        setMhpCreditError(e.data.error?.trim() || "스토어 크레딧을 불러오지 못했습니다.");
+      }
+    };
+    window.addEventListener("message", onCredit);
+    return () => window.removeEventListener("message", onCredit);
+  }, []);
+
+  useEffect(() => {
+    requestMhpCredit();
+    const id = window.setInterval(requestMhpCredit, MHP_CREDIT_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [requestMhpCredit]);
+
+  const requestMhpApply = useCallback(
+    (index: number) => {
+      const row = rows[index];
+      const v = String(row?.vehicle_num ?? "").trim().replace(/\D/g, "").slice(0, 4);
+      if (v.length !== 4) {
+        alert("차량 번호 4자리를 입력한 뒤 등록하세요.");
+        return;
+      }
+      const ad = row?.all_day_cnt ?? 0;
+      const h2 = row?.["2h_cnt"] ?? 0;
+      const h1 = row?.["1h_cnt"] ?? 0;
+      const m30 = row?.["30m_cnt"] ?? 0;
+      if (ad + h2 + h1 + m30 <= 0) {
+        alert("종일·2h·1h·30m 중 최소 하나에 수량을 입력하세요.");
+        return;
+      }
+      const requestId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `mhp-apply-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      mhpApplyPendingRef.current = { requestId, index };
+      setMhpApplyLoadingIndex(index);
+      postMhpApplyRequest(requestId, v, {
+        all_day_cnt: ad,
+        "2h_cnt": h2,
+        "1h_cnt": h1,
+        "30m_cnt": m30,
+      });
+      const applySteps =
+        (ad > 0 ? 1 : 0) + (h2 > 0 ? 1 : 0) + (h1 > 0 ? 1 : 0) + (m30 > 0 ? 1 : 0);
+      const applyTimeoutMs = 25000 + Math.max(0, applySteps - 1) * 7000;
+      window.setTimeout(() => {
+        if (mhpApplyPendingRef.current?.requestId !== requestId) return;
+        mhpApplyPendingRef.current = null;
+        setMhpApplyLoadingIndex((cur) => (cur === index ? null : cur));
+        alert("응답이 없습니다. 확장 프로그램과 MHP 탭을 확인하세요.");
+      }, applyTimeoutMs);
+    },
+    [rows]
+  );
+
+  const requestMhpLookup = useCallback(
+    (index: number) => {
+      const row = rows[index];
+      const v = String(row?.vehicle_num ?? "").trim().replace(/\D/g, "").slice(0, 4);
+      if (v.length !== 4) {
+        alert("차량 번호 4자리를 입력한 뒤 조회하세요.");
+        return;
+      }
+      const requestId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `mhp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      setRows((prev) =>
+        prev.map((r, i) =>
+          i === index ? { ...r, mhp_entry_at: undefined, mhp_parking_duration: undefined } : r
+        )
+      );
+      mhpPendingRef.current = { requestId, index, vehicleNum: v };
+      setMhpLoadingIndex(index);
+      postMhpLookupRequest(v, requestId);
+      window.setTimeout(() => {
+        if (mhpPendingRef.current?.requestId !== requestId) return;
+        mhpPendingRef.current = null;
+        setMhpLoadingIndex((cur) => (cur === index ? null : cur));
+        alert("응답이 없습니다. 확장 프로그램 설치·새로고침과 MHP 콘솔 탭을 확인하세요.");
+      }, 25000);
+    },
+    [rows]
+  );
+
   const saveRow = useCallback(
     (row: RowState, index: number) => {
       const vehicle = String(row.vehicle_num).trim().slice(0, 4);
@@ -352,7 +547,14 @@ export default function ParkingPageClient() {
       setTimeout(() => vehicleRefs.current[newIndex]?.focus(), 0);
       return [
         ...prev,
-        { vehicle_num: "", date: selectedDate, all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0 },
+        {
+          vehicle_num: "",
+          date: selectedDate,
+          all_day_cnt: 0,
+          "2h_cnt": 0,
+          "1h_cnt": 0,
+          "30m_cnt": 0,
+        },
       ];
     });
   }, [selectedDate]);
@@ -442,7 +644,7 @@ export default function ParkingPageClient() {
     <div className="min-h-screen bg-[var(--bg)]">
       <header className="border-b border-[var(--border)] bg-white">
         <div className="mx-auto max-w-7xl px-8 py-5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -453,6 +655,30 @@ export default function ParkingPageClient() {
                 <Home className="h-4 w-4" />
               </button>
               <h1 className="text-xl font-semibold text-[var(--text)]">주차권 등록</h1>
+            </div>
+            <div className="flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-white px-3 py-2 shadow-sm sm:px-4 sm:py-2.5">
+              <Wallet className="h-5 w-5 shrink-0 text-[var(--text-muted)]" aria-hidden />
+              <div className="min-w-0 text-right">
+                <p className="text-sm font-semibold tracking-tight text-[var(--text-muted)] sm:text-base">
+                  MHP 스토어 크레딧
+                </p>
+                <p
+                  className="text-base font-bold tabular-nums text-[var(--text)] sm:text-lg"
+                  title={mhpCreditError && !mhpCreditDisplay ? mhpCreditError : undefined}
+                >
+                  {mhpCreditLoading && !mhpCreditDisplay ? "…" : (mhpCreditDisplay ?? "—")}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => requestMhpCredit()}
+                disabled={mhpCreditLoading}
+                className="inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg)] hover:text-[var(--text)] disabled:cursor-wait disabled:opacity-50"
+                title="크레딧 다시 읽기 (MHP 탭 열림 필요)"
+                aria-label="스토어 크레딧 새로고침"
+              >
+                <RefreshCw className={`h-4 w-4 ${mhpCreditLoading ? "animate-spin" : ""}`} />
+              </button>
             </div>
           </div>
         </div>
@@ -580,25 +806,45 @@ export default function ParkingPageClient() {
         </div>
 
         <p className="mb-4 text-xs text-[var(--text-muted)]">
-          방향키로 상하좌우 이동. Tab은 다음칸으로 이동하며, Enter는 새 행을 만든 뒤 그 행으로 이동합니다.
+          방향키로 상하좌우 이동. Tab은 다음칸으로 이동하며, Enter는 새 행을 만든 뒤 그 행으로 이동합니다.{" "}
+          <span className="font-medium text-[var(--text)]">조회</span>는 MHP에 4자리 조회,{" "}
+          <span className="font-medium text-[var(--text)]">등록</span>은 입력한 종류·수량만큼 MHP에서 순서대로 할인 적용합니다.
         </p>
 
         <div className="card card-hover overflow-x-auto p-8">
-          <table className="w-full text-left text-sm">
+          <table className="w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col style={{ width: "5.25rem" }} />
+              <col style={{ width: "4.75rem" }} />
+              <col style={{ width: "12.25rem" }} />
+              <col style={{ width: "6.75rem" }} />
+              {TICKET_KEYS.map((k) => (
+                <col key={k} style={{ width: "2.85rem" }} />
+              ))}
+              <col style={{ width: "4.25rem" }} />
+              <col style={{ width: "6.5rem" }} />
+              <col style={{ width: "2.35rem" }} />
+            </colgroup>
             <thead>
               <tr className="text-[var(--text-muted)]">
-                <th className="w-24 pb-3 font-medium text-[var(--text)]">차량</th>
+                <th className="pb-3 font-medium text-[var(--text)]">차량</th>
+                <th className="pb-3 text-center font-medium text-[var(--text)]">조회</th>
+                <th className="pb-3 text-left font-medium text-[var(--text)]">입차 일시</th>
+                <th className="pb-3 font-medium text-[var(--text)]">주차시간</th>
                 {TICKET_KEYS.map((k) => (
-                  <th key={k} className="w-16 px-1 pb-3 text-center font-medium text-[var(--text)]">{TICKET_LABELS[k]}</th>
+                  <th key={k} className="px-0.5 pb-3 text-center text-xs font-medium text-[var(--text)]">
+                    {TICKET_LABELS[k]}
+                  </th>
                 ))}
-                <th className="w-28 pl-2 pb-3 font-medium text-[var(--text)]">일자</th>
-                <th className="w-12 pb-3"></th>
+                <th className="pb-3 text-center text-xs font-medium text-[var(--text)]">등록</th>
+                <th className="pb-3 pl-1 font-medium text-[var(--text)]">일자</th>
+                <th className="pb-3"></th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row, index) => (
                 <tr key={index} className="table-row-hover transition-colors">
-                  <td className="py-2 pr-2">
+                  <td className="py-2 pr-3 align-middle">
                     <input
                       ref={(el) => { vehicleRefs.current[index] = el; }}
                       type="text"
@@ -608,12 +854,46 @@ export default function ParkingPageClient() {
                       onChange={(e) => updateRow(index, "vehicle_num", e.target.value.replace(/\D/g, ""))}
                       onBlur={() => saveVehicleRow(index)}
                       onKeyDown={(e) => onVehicleKeyDown(e, index)}
-                      className="input w-20 px-2.5 py-2 text-center text-sm font-bold text-[var(--text)]"
+                      className="input w-full max-w-[5rem] px-2.5 py-2 text-center text-sm font-bold text-[var(--text)]"
                       placeholder="0000"
                     />
                   </td>
+                  <td className="py-2 px-3 align-middle">
+                    <div className="flex justify-center">
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        disabled={mhpLoadingIndex !== null || mhpApplyLoadingIndex !== null}
+                        onClick={() => requestMhpLookup(index)}
+                        className="btn inline-flex min-w-[3.25rem] shrink-0 items-center justify-center px-2 py-1.5 text-xs disabled:cursor-wait disabled:opacity-60"
+                        title="MHP 콘솔에 번호 입력·자동 조회 후 입차 정보 반영(확장 필요)"
+                      >
+                        {mhpLoadingIndex === index ? "…" : "조회"}
+                      </button>
+                    </div>
+                  </td>
+                  <td className="py-2 pr-1 align-middle">
+                    <input
+                      type="text"
+                      readOnly
+                      tabIndex={-1}
+                      value={row.mhp_entry_at ?? ""}
+                      placeholder="조회 시"
+                      className="input w-full max-w-[12rem] px-2.5 py-2 text-left text-sm text-[var(--text)] placeholder:text-[var(--text-muted)]"
+                    />
+                  </td>
+                  <td className="py-2 pr-1 align-middle">
+                    <input
+                      type="text"
+                      readOnly
+                      tabIndex={-1}
+                      value={row.mhp_parking_duration ?? ""}
+                      placeholder="조회 시"
+                      className="input w-full max-w-[6.75rem] px-2.5 py-2 text-left text-sm text-[var(--text)] placeholder:text-[var(--text-muted)]"
+                    />
+                  </td>
                   {TICKET_KEYS.map((key, colIndex) => (
-                    <td key={key} className="w-16 px-1 py-2">
+                    <td key={key} className="px-0.5 py-2 align-middle">
                       <input
                         ref={(el) => {
                           if (!ticketRefs.current[index]) ticketRefs.current[index] = [];
@@ -624,11 +904,24 @@ export default function ParkingPageClient() {
                         value={row[key] === 0 ? "" : row[key]}
                         onChange={(e) => updateRow(index, key, e.target.value.replace(/\D/g, ""))}
                         onKeyDown={(e) => onTicketKeyDown(e, index, colIndex)}
-                        className="input-inset w-full px-1 py-1.5 text-center text-sm text-[var(--text)]"
+                        className="input-inset w-full min-w-0 px-0.5 py-1.5 text-center text-sm text-[var(--text)]"
                       />
                     </td>
                   ))}
-                  <td className="w-28 pl-2 py-2 text-[var(--text-muted)]">{row.date || selectedDate}</td>
+                  <td className="py-2 px-0.5 text-center align-middle">
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      disabled={mhpApplyLoadingIndex !== null || mhpLoadingIndex !== null}
+                      onClick={() => requestMhpApply(index)}
+                      className="btn btn-primary inline-flex w-full max-w-[3.75rem] items-center justify-center px-1.5 py-1.5 text-xs whitespace-nowrap shadow-sm disabled:cursor-wait disabled:opacity-60"
+                      title="MHP 콘솔에서 선택한 할인 종류·수량으로 할인 적용(확장 필요)"
+                      aria-label="MHP 할인 등록"
+                    >
+                      {mhpApplyLoadingIndex === index ? "…" : "등록"}
+                    </button>
+                  </td>
+                  <td className="py-2 pl-1 pr-0 text-sm text-[var(--text-muted)]">{row.date || selectedDate}</td>
                   <td className="w-12 py-2 pl-1">
                     {(row.recordId || row.vehicle_num?.trim()) && (
                       <button

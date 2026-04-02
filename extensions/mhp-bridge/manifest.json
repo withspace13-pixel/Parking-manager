@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Parking Manager ↔ MHP",
+  "version": "1.2.3",
+  "description": "주차 관리 앱과 하이파킹 MHP 콘솔 간 조회 연동",
+  "permissions": ["tabs", "scripting"],
+  "host_permissions": [
+    "https://parking-manager-ashen.vercel.app/*",
+    "http://localhost:3000/*",
+    "http://localhost:3001/*",
+    "http://127.0.0.1:3000/*",
+    "http://127.0.0.1:3001/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://parking-manager-ashen.vercel.app/*",
+        "http://localhost:3000/*",
+        "http://localhost:3001/*",
+        "http://127.0.0.1:3000/*",
+        "http://127.0.0.1:3001/*"
+      ],
+      "js": ["content_script_app.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "exclude_matches": [
+        "https://parking-manager-ashen.vercel.app/*",
+        "http://localhost:3000/*",
+        "http://localhost:3001/*",
+        "http://127.0.0.1:3000/*",
+        "http://127.0.0.1:3001/*"
+      ],
+      "js": ["content_script_mhp.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
