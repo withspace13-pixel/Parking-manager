@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Calculator, Home, Plus, RefreshCw, Trash2, Wallet } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
@@ -56,6 +56,8 @@ type RowState = {
   /** MHP 콘솔 조회 결과(화면 전용, DB 미저장) */
   mhp_entry_at?: string;
   mhp_parking_duration?: string;
+  /** MHP에 이미 적용된(취소 아님) 할인 요약 — 중복 등록 안내 */
+  mhp_applied_discounts_summary?: string;
 };
 
 const TICKET_KEYS = ["all_day_cnt", "2h_cnt", "1h_cnt", "30m_cnt"] as const;
@@ -314,19 +316,37 @@ export default function ParkingPageClient() {
       if (e.data.ok && (e.data.parkingTimeText ?? "").trim()) {
         const text = (e.data.parkingTimeText ?? "").trim();
         const { entryAt, duration } = splitMhpParkingDisplayText(text);
+        const summary = (e.data.appliedDiscountsSummary ?? "").trim();
         setRows((prev) => {
           const row = prev[rowIndex];
           if (!row || !rowVehicleOk(row.vehicle_num)) return prev;
           return prev.map((r, i) =>
-            i === rowIndex ? { ...r, mhp_entry_at: entryAt, mhp_parking_duration: duration } : r
+            i === rowIndex
+              ? {
+                  ...r,
+                  mhp_entry_at: entryAt,
+                  mhp_parking_duration: duration,
+                  mhp_applied_discounts_summary: summary || undefined,
+                }
+              : r
           );
         });
+        if (summary) {
+          alert(`이미 주차권 등록된 내역이 있습니다.\n\n${summary}`);
+        }
       } else {
         setRows((prev) => {
           const row = prev[rowIndex];
           if (!row || !rowVehicleOk(row.vehicle_num)) return prev;
           return prev.map((r, i) =>
-            i === rowIndex ? { ...r, mhp_entry_at: undefined, mhp_parking_duration: undefined } : r
+            i === rowIndex
+              ? {
+                  ...r,
+                  mhp_entry_at: undefined,
+                  mhp_parking_duration: undefined,
+                  mhp_applied_discounts_summary: undefined,
+                }
+              : r
           );
         });
         alert(e.data.error?.trim() || "MHP 조회에 실패했습니다.");
@@ -413,6 +433,13 @@ export default function ParkingPageClient() {
         alert("종일·2h·1h·30m 중 최소 하나에 수량을 입력하세요.");
         return;
       }
+      const mhpExisting = (row?.mhp_applied_discounts_summary ?? "").trim();
+      if (mhpExisting) {
+        alert(
+          `이미 주차권 등록된 내역이 있습니다.\n\n${mhpExisting}\n\nMHP에서 해당 할인을 확인·처리한 뒤 다시 조회하면 등록할 수 있습니다.`
+        );
+        return;
+      }
       const requestId =
         typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
@@ -452,7 +479,14 @@ export default function ParkingPageClient() {
           : `mhp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       setRows((prev) =>
         prev.map((r, i) =>
-          i === index ? { ...r, mhp_entry_at: undefined, mhp_parking_duration: undefined } : r
+          i === index
+            ? {
+                ...r,
+                mhp_entry_at: undefined,
+                mhp_parking_duration: undefined,
+                mhp_applied_discounts_summary: undefined,
+              }
+            : r
         )
       );
       mhpPendingRef.current = { requestId, index, vehicleNum: v };
@@ -463,7 +497,7 @@ export default function ParkingPageClient() {
         mhpPendingRef.current = null;
         setMhpLoadingIndex((cur) => (cur === index ? null : cur));
         alert("응답이 없습니다. 확장 프로그램 설치·새로고침과 MHP 콘솔 탭을 확인하세요.");
-      }, 25000);
+      }, 32000);
     },
     [rows]
   );
@@ -843,7 +877,8 @@ export default function ParkingPageClient() {
             </thead>
             <tbody>
               {rows.map((row, index) => (
-                <tr key={index} className="table-row-hover transition-colors">
+                <Fragment key={index}>
+                <tr className="table-row-hover transition-colors">
                   <td className="py-2 pr-3 align-middle">
                     <input
                       ref={(el) => { vehicleRefs.current[index] = el; }}
@@ -936,6 +971,22 @@ export default function ParkingPageClient() {
                     )}
                   </td>
                 </tr>
+                {row.mhp_applied_discounts_summary ? (
+                  <tr className="table-row-hover">
+                    <td
+                      colSpan={
+                        4 +
+                        TICKET_KEYS.length +
+                        3
+                      }
+                      className="border-t border-amber-200/80 bg-amber-50/90 px-3 py-2 text-xs leading-relaxed text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/35 dark:text-amber-100"
+                    >
+                      <span className="font-semibold">이미 주차권 등록된 내역이 있습니다.</span>{" "}
+                      <span className="opacity-90">{row.mhp_applied_discounts_summary}</span>
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               ))}
             </tbody>
           </table>

@@ -88,6 +88,7 @@ function deliverToApp(appTabId, payload) {
     requestId: payload.requestId,
     ok: !!payload.ok,
     parkingTimeText: payload.parkingTimeText ?? "",
+    appliedDiscountsSummary: payload.appliedDiscountsSummary ?? "",
     creditText: payload.creditText ?? "",
     error: payload.error ?? "",
     detail: payload.detail ?? "",
@@ -106,6 +107,7 @@ function deliverToApp(appTabId, payload) {
               requestId: p.requestId,
               ok: p.ok,
               parkingTimeText: p.parkingTimeText,
+              appliedDiscountsSummary: p.appliedDiscountsSummary,
               creditText: p.creditText,
               error: p.error,
               detail: p.detail,
@@ -119,6 +121,7 @@ function deliverToApp(appTabId, payload) {
             requestId: envelope.requestId,
             ok: envelope.ok,
             parkingTimeText: envelope.parkingTimeText,
+            appliedDiscountsSummary: envelope.appliedDiscountsSummary,
             creditText: envelope.creditText,
             error: envelope.error,
             detail: envelope.detail,
@@ -236,12 +239,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "MHP_LOOKUP_RESULT") {
-    const { appTabId, requestId, ok, parkingTimeText, error } = msg;
+    const { appTabId, requestId, ok, parkingTimeText, error, appliedDiscountsSummary } = msg;
     deliverToApp(appTabId, {
       requestId,
       ok: !!ok,
       kind: "lookup",
       parkingTimeText: parkingTimeText ?? "",
+      appliedDiscountsSummary: appliedDiscountsSummary ?? "",
       error,
     });
     return false;

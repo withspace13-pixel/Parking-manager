@@ -395,6 +395,235 @@
     return "";
   }
 
+  /** MHP 할인 적용 내역 카드 루트 (제공된 마크업 기준) */
+  const MHP_DISCOUNT_CARD_SEL = "div.relative.flex.w-full.flex-col.gap-2";
+
+  /**
+   * 할인 적용 내역이 들어 있는 MHP DOM 구간(너무 크면 잘못된 상위 div).
+   * 제목만 있는 작은 래퍼가 잡히면 카드가 빠지므로, h2 기준으로 카드가 있는 조상을 우선 사용.
+   */
+  function findMhpDiscountHistorySectionRoot() {
+    let best = null;
+    let bestLen = Infinity;
+    for (const el of document.querySelectorAll("section, article, main, aside, div")) {
+      if (!(el instanceof HTMLElement)) continue;
+      const it = el.innerText || "";
+      if (!/할인\s*적용\s*내역/.test(it.slice(0, 400))) continue;
+      const len = it.length;
+      if (len < 120 || len > 45000) continue;
+      if (len < bestLen) {
+        bestLen = len;
+        best = el;
+      }
+    }
+    return best;
+  }
+
+  function findMhpDiscountHistoryScope() {
+    const h2s = document.querySelectorAll("h2");
+    for (const h2 of h2s) {
+      const ht = (h2.textContent || "").replace(/\s+/g, " ").trim();
+      if (!/할인\s*적용\s*내역/.test(ht.slice(0, 100))) continue;
+      let node = h2.parentElement;
+      for (let i = 0; i < 18 && node; i++) {
+        try {
+          if (node.querySelectorAll(MHP_DISCOUNT_CARD_SEL).length >= 1) return node;
+        } catch (_) {}
+        node = node.parentElement;
+      }
+      return h2.parentElement || document.body;
+    }
+    return findMhpDiscountHistorySectionRoot();
+  }
+
+  function countsToSummaryParts(counts) {
+    const parts = [];
+    if (counts.day) parts.push(`종일 ${counts.day}매`);
+    if (counts.h2) parts.push(`2시간 할인권 ${counts.h2}매`);
+    if (counts.h1) parts.push(`1시간 할인권 ${counts.h1}매`);
+    if (counts.m30) parts.push(`30분 할인권 ${counts.m30}매`);
+    if (counts.other) parts.push(`기타 할인 ${counts.other}건`);
+    return parts.join(", ");
+  }
+
+  function classifyTicketLineIntoCounts(counts, oneLineNorm) {
+    let hit = false;
+    if (/당일권/.test(oneLineNorm)) {
+      counts.day += 1;
+      hit = true;
+    } else if (/2\s*시간.*할인|2시간할인/.test(oneLineNorm)) {
+      counts.h2 += 1;
+      hit = true;
+    } else if (/1\s*시간.*할인|1시간할인/.test(oneLineNorm)) {
+      counts.h1 += 1;
+      hit = true;
+    } else if (/30\s*분.*할인|30분.*할인/.test(oneLineNorm)) {
+      counts.m30 += 1;
+      hit = true;
+    }
+    if (!hit) counts.other += 1;
+  }
+
+  /**
+   * DOM: MHP 마크업 기준
+   * - 카드: div.relative.flex.w-full.flex-col.gap-2
+   * - 활성: span.text-orange-600 직계 자식 span 텍스트가 「미사용」
+   * - 취소: span.text-red-600 → 「적용 취소」(카드에 orange 미사용 없음)
+   */
+  function readMhpActiveDiscountSummaryFromDom() {
+    const scope = findMhpDiscountHistoryScope();
+    if (!scope) return "";
+
+    const counts = { day: 0, h2: 0, h1: 0, m30: 0, other: 0 };
+
+    function normTxt(s) {
+      return String(s || "")
+        .trim()
+        .replace(/\u00a0/g, " ")
+        .replace(/[\u200b-\u200d\ufeff]/g, "");
+    }
+
+    /** 활성(미사용) 카드만 true — orange 래퍼 안의 직접 자식 span이 정확히 미사용 */
+    function isMhpActiveUnusedDiscountCard(card) {
+      if (!(card instanceof HTMLElement)) return false;
+      const oranges = card.querySelectorAll("span.text-orange-600, span[class*='text-orange-600']");
+      for (let oi = 0; oi < oranges.length; oi++) {
+        const o = oranges[oi];
+        let raw = "";
+        for (const ch of o.children) {
+          if (ch.tagName === "SPAN") {
+            raw = normTxt(ch.textContent);
+            break;
+          }
+        }
+        if (!raw) raw = normTxt(o.textContent);
+        if (raw === "미사용") return true;
+      }
+      return false;
+    }
+
+    let cards;
+    try {
+      cards = scope.querySelectorAll(MHP_DISCOUNT_CARD_SEL);
+    } catch (_) {
+      return "";
+    }
+    if (!cards.length) {
+      try {
+        cards = scope.querySelectorAll("div.relative.flex[class*='flex-col'][class*='gap-2']");
+      } catch (_) {
+        return "";
+      }
+    }
+    if (!cards.length) return "";
+
+    for (let ci = 0; ci < cards.length; ci++) {
+      const card = cards[ci];
+      if (!isMhpActiveUnusedDiscountCard(card)) continue;
+      const oneLine = (card.innerText || "").replace(/\r/g, "").replace(/\s+/g, " ").trim();
+      classifyTicketLineIntoCounts(counts, oneLine);
+    }
+
+    return countsToSummaryParts(counts);
+  }
+
+  /** innerText 슬라이스 기반 (DOM 실패 시 보조) */
+  function readMhpActiveDiscountSummaryFromText() {
+    const raw = (document.body?.innerText || "").replace(/\r/g, "");
+    const key = "할인 적용 내역";
+    const i = raw.indexOf(key);
+    if (i < 0) return "";
+
+    let after = raw.slice(i + key.length);
+    after = after.replace(/^\s*(\([\d\s]*건\))?\s*/, "");
+
+    const stopRe =
+      /\n(?:주차\s*할인|할인\s*선택|메모\s*입력|차량\s*정보|총\s*주차|결제|홈으로)/;
+    const sm = after.match(stopRe);
+    const chunk = sm && sm.index != null ? after.slice(0, sm.index) : after.slice(0, 10000);
+
+    const lines = chunk.split("\n").map((l) => l.trim()).filter(Boolean);
+    const timeRe = /\d{4}\.\d{2}\.\d{2}\s+\d{1,2}:\d{2}/;
+
+    const counts = { day: 0, h2: 0, h1: 0, m30: 0, other: 0 };
+
+    function cardBoundsForLine(li) {
+      let bs = li;
+      for (let k = li - 1; k >= 0 && k >= li - 24; k--) {
+        if (timeRe.test(lines[k])) {
+          bs = k + 1;
+          break;
+        }
+        bs = k;
+      }
+      let be = li;
+      for (let k = li + 1; k < lines.length && k <= li + 20; k++) {
+        if (timeRe.test(lines[k])) {
+          be = k;
+          break;
+        }
+        be = k;
+      }
+      return { bs, be };
+    }
+
+    function classifySegment(segLines) {
+      const t = segLines.join(" ").replace(/\s+/g, " ");
+      if (!/미사용/.test(t) || /취소\s*내역\s*표시|할인\s*적용\s*내역/.test(t)) return;
+      if (!/적용\s*취소/.test(t)) {
+        const idxs = [];
+        for (let i = 0; i < segLines.length; i++) {
+          const L = segLines[i];
+          if (/미사용/.test(L) && !/적용\s*취소/.test(L)) idxs.push(i);
+        }
+        for (const idx of idxs) {
+          const sub = segLines.slice(Math.max(0, idx - 12), idx + 1).join(" ").replace(/\s+/g, " ");
+          classifyTicketLineIntoCounts(counts, sub);
+        }
+        return;
+      }
+      let buf = [];
+      for (const L of segLines) {
+        if (/적용\s*취소/.test(L) && !/미사용/.test(L)) {
+          if (buf.length) {
+            const u = buf.join(" ").replace(/\s+/g, " ");
+            if (/미사용/.test(u) && !/적용\s*취소/.test(u)) classifyTicketLineIntoCounts(counts, u);
+          }
+          buf = [];
+        } else {
+          buf.push(L);
+        }
+      }
+      if (buf.length) {
+        const u = buf.join(" ").replace(/\s+/g, " ");
+        if (/미사용/.test(u) && !/적용\s*취소/.test(u)) classifyTicketLineIntoCounts(counts, u);
+      }
+    }
+
+    const doneRanges = new Set();
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+      if (!/미사용/.test(line)) continue;
+      if (/적용\s*취소/.test(line)) continue;
+      if (/취소\s*내역\s*표시|할인\s*적용\s*내역/.test(line)) continue;
+
+      const { bs, be } = cardBoundsForLine(li);
+      const rangeKey = `${bs}-${be}`;
+      if (doneRanges.has(rangeKey)) continue;
+      doneRanges.add(rangeKey);
+
+      classifySegment(lines.slice(bs, be + 1));
+    }
+
+    return countsToSummaryParts(counts);
+  }
+
+  function readMhpActiveDiscountSummary() {
+    const dom = readMhpActiveDiscountSummaryFromDom().trim();
+    if (dom) return dom;
+    return readMhpActiveDiscountSummaryFromText().trim();
+  }
+
   /** MHP가 차량 없음·미등록 등을 알릴 때 본문에 자주 쓰이는 문구 */
   function detectMhpLookupNoVehicle(bodyText) {
     const t = String(bodyText || "").replace(/\r/g, "");
@@ -460,10 +689,13 @@
 
   function waitForResult(beforeText, requestId, appTabId, vehicleDigits) {
     const start = Date.now();
-    /** 직전 조회 실패 문구가 DOM에 남아 있으면, 새 번호 입력 직후 같은 문구로 즉시 실패하지 않게 함 */
-    const initialBodyText = (document.body?.innerText || "").replace(/\r/g, "");
-    const initialNoVehicle = detectMhpLookupNoVehicle(initialBodyText);
-    const NO_VEHICLE_STALE_GRACE_MS = 1400;
+    /**
+     * '미등록/없음' 문구는 첫 조회 직후 로딩·플레이스홀더에 잠깐 떴다 사라지는 경우가 있음.
+     * 예전: initialNoVehicle===false 일 때 trustNoVehicleMsg가 항상 true라 첫 폴링(10ms)에서 바로 실패함.
+     * → 최소 경과 후에만 미등록으로 끊고, 조회 중(busy)이면 끊지 않음.
+     */
+    /** busy 체크로 오인 완화 → 실패 판정만 너무 늦추지 않음 */
+    const NO_VEHICLE_FAIL_MIN_MS = 2100;
 
     let done = false;
     let lastStable = null;
@@ -476,14 +708,60 @@
       try {
         obs.disconnect();
       } catch (_) {}
-      chrome.runtime.sendMessage({
-        type: "MHP_LOOKUP_RESULT",
-        appTabId,
-        requestId,
-        ok,
-        parkingTimeText: text || "",
-        error: err,
-      });
+
+      if (!ok) {
+        chrome.runtime.sendMessage({
+          type: "MHP_LOOKUP_RESULT",
+          appTabId,
+          requestId,
+          ok: false,
+          parkingTimeText: text || "",
+          error: err,
+          appliedDiscountsSummary: "",
+        });
+        return;
+      }
+
+      /** 입차정보는 먼저 안정되는데 할인 내역 카드가 늦게 붙는 경우가 있어, 짧게 여러 번 읽어 가장 풍부한 요약을 택함 */
+      function scoreSummary(s) {
+        const t = String(s || "").trim();
+        if (!t) return 0;
+        const hits = (t.match(/매|건/g) || []).length;
+        return hits * 20 + t.length;
+      }
+      function richer(a, b) {
+        const sa = String(a || "").trim();
+        const sb = String(b || "").trim();
+        if (!sb) return sa;
+        if (!sa) return sb;
+        return scoreSummary(sb) > scoreSummary(sa) ? sb : sa;
+      }
+      let bestSummary = readMhpActiveDiscountSummary();
+      const flush = () => {
+        bestSummary = richer(bestSummary, readMhpActiveDiscountSummary());
+      };
+      const sendOk = () => {
+        chrome.runtime.sendMessage({
+          type: "MHP_LOOKUP_RESULT",
+          appTabId,
+          requestId,
+          ok: true,
+          parkingTimeText: text || "",
+          error: err || "",
+          appliedDiscountsSummary: bestSummary,
+        });
+      };
+      flush();
+      /** 할인 카드 DOM이 늦게 붙을 수 있어 짧게 재읽기(이전 0+140+280ms → 약 160ms로 단축, 기능 유지) */
+      const SUMMARY_T1_MS = 45;
+      const SUMMARY_T2_MS = 110;
+      setTimeout(() => {
+        flush();
+        setTimeout(() => {
+          flush();
+          sendOk();
+        }, SUMMARY_T2_MS);
+      }, SUMMARY_T1_MS);
     }
 
     function tryOnce() {
@@ -492,17 +770,18 @@
       const text = readMhpResultText();
       const plateOk = mhpUiShowsLookupVehicleDigits(vehicleDigits);
 
-      if (detectMhpLookupNoVehicle(bodyText)) {
-        const trustNoVehicleMsg =
-          !initialNoVehicle || (elapsed >= NO_VEHICLE_STALE_GRACE_MS && !(text && plateOk));
-        if (trustNoVehicleMsg && !(text && plateOk)) {
-          complete(
-            false,
-            "",
-            "MHP에서 해당 차량을 찾지 못했습니다. 차량 번호 4자리를 확인한 뒤 다시 조회하세요."
-          );
-          return;
-        }
+      if (
+        detectMhpLookupNoVehicle(bodyText) &&
+        !detectMhpLookupBusy(bodyText) &&
+        !(text && plateOk) &&
+        elapsed >= NO_VEHICLE_FAIL_MIN_MS
+      ) {
+        complete(
+          false,
+          "",
+          "MHP에서 해당 차량을 찾지 못했습니다. 차량 번호 4자리를 확인한 뒤 다시 조회하세요."
+        );
+        return;
       }
 
       const changedOrWaited = text && (text !== beforeText || elapsed >= SAME_RESULT_MIN_MS);
@@ -686,8 +965,8 @@
     if (!clickDiscountApplyButton()) {
       throw new Error("「할인 적용」버튼을 찾지 못했습니다.");
     }
-    /** 백그라운드 탭에서 짧은 delay 여러 번은 각각 ~1초로 쓰로틀될 수 있어 한 번만 대기 */
-    await delay(320);
+    /** 백그라운드 탭에서는 짧은 delay를 여러 번 두면 각각 쓰로틀될 수 있어 한 번만 대기(가능한 짧게) */
+    await delay(240);
   }
 
   function formatWonDisplay(numStr) {

@@ -149,6 +149,7 @@
           requestId: msg.requestId,
           ok: !!msg.ok,
           parkingTimeText: msg.parkingTimeText,
+          appliedDiscountsSummary: msg.appliedDiscountsSummary ?? "",
           creditText: msg.creditText ?? "",
           error: msg.error,
           detail: msg.detail,

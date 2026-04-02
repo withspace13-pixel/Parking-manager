@@ -15,6 +15,8 @@ export type MhpLookupResponsePayload = {
   requestId: string;
   ok: boolean;
   parkingTimeText?: string;
+  /** MHP 「할인 적용 내역」에서 적용 취소가 아닌 건만 집계한 안내 문구(없으면 빈 문자열) */
+  appliedDiscountsSummary?: string;
   error?: string;
 };
 
