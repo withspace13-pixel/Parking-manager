@@ -15,6 +15,20 @@
     );
   }
 
+  function replySyncError(requestId, message) {
+    window.postMessage(
+      { source: SOURCE, type: "MHP_SYNC_RESPONSE", requestId, ok: false, error: message },
+      "*"
+    );
+  }
+
+  function replyCancelAllError(requestId, message) {
+    window.postMessage(
+      { source: SOURCE, type: "MHP_CANCEL_ALL_RESPONSE", requestId, ok: false, error: message },
+      "*"
+    );
+  }
+
   function replyCreditError(requestId, message) {
     window.postMessage(
       { source: SOURCE, type: "MHP_CREDIT_RESPONSE", requestId, ok: false, error: message, creditText: "" },
@@ -105,6 +119,84 @@
       return;
     }
 
+    if (d.type === "MHP_SYNC_REQUEST") {
+      try {
+        if (!chrome.runtime?.id) {
+          replySyncError(
+            d.requestId,
+            "확장 프로그램을 방금 다시 로드했습니다. 이 탭을 새로고침(F5)한 뒤 다시 등록하세요."
+          );
+          return;
+        }
+        chrome.runtime.sendMessage(
+          {
+            type: "SYNC_FROM_APP",
+            requestId: d.requestId,
+            vehicleNum: String(d.vehicleNum || "").replace(/\D/g, "").slice(0, 4),
+            all_day_cnt: Number(d.all_day_cnt) || 0,
+            cnt_2h: Number(d["2h_cnt"]) || 0,
+            cnt_1h: Number(d["1h_cnt"]) || 0,
+            cnt_30m: Number(d["30m_cnt"]) || 0,
+          },
+          () => {
+            const err = chrome.runtime.lastError;
+            if (!err) return;
+            const m = err.message || "";
+            const invalidated = /invalidated|Extension context/i.test(m);
+            replySyncError(
+              d.requestId,
+              invalidated
+                ? "확장 프로그램을 방금 다시 로드했습니다. 이 탭을 새로고침(F5)한 뒤 다시 등록하세요."
+                : m || "확장 프로그램 통신 오류"
+            );
+          }
+        );
+      } catch (_) {
+        replySyncError(
+          d.requestId,
+          "확장 프로그램을 방금 다시 로드했습니다. 이 탭을 새로고침(F5)한 뒤 다시 등록하세요."
+        );
+      }
+      return;
+    }
+
+    if (d.type === "MHP_CANCEL_ALL_REQUEST") {
+      try {
+        if (!chrome.runtime?.id) {
+          replyCancelAllError(
+            d.requestId,
+            "확장 프로그램을 방금 다시 로드했습니다. 이 탭을 새로고침(F5)한 뒤 다시 시도하세요."
+          );
+          return;
+        }
+        chrome.runtime.sendMessage(
+          {
+            type: "CANCEL_ALL_FROM_APP",
+            requestId: d.requestId,
+            vehicleNum: String(d.vehicleNum || "").replace(/\D/g, "").slice(0, 4),
+          },
+          () => {
+            const err = chrome.runtime.lastError;
+            if (!err) return;
+            const m = err.message || "";
+            const invalidated = /invalidated|Extension context/i.test(m);
+            replyCancelAllError(
+              d.requestId,
+              invalidated
+                ? "확장 프로그램을 방금 다시 로드했습니다. 이 탭을 새로고침(F5)한 뒤 다시 시도하세요."
+                : m || "확장 프로그램 통신 오류"
+            );
+          }
+        );
+      } catch (_) {
+        replyCancelAllError(
+          d.requestId,
+          "확장 프로그램을 방금 다시 로드했습니다. 이 탭을 새로고침(F5)한 뒤 다시 시도하세요."
+        );
+      }
+      return;
+    }
+
     if (d.type === "MHP_CREDIT_REQUEST") {
       try {
         if (!chrome.runtime?.id) {
@@ -150,9 +242,11 @@
           ok: !!msg.ok,
           parkingTimeText: msg.parkingTimeText,
           appliedDiscountsSummary: msg.appliedDiscountsSummary ?? "",
+          appliedDiscountCounts: msg.appliedDiscountCounts ?? null,
           creditText: msg.creditText ?? "",
           error: msg.error,
           detail: msg.detail,
+          diff: msg.diff ?? null,
         },
         "*"
       );

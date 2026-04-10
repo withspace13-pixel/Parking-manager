@@ -17,11 +17,15 @@ import {
 import { formatMonthDaySlash, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
 import {
   isMhpApplyResponse,
+  isMhpCancelAllResponse,
   isMhpCreditResponse,
   isMhpLookupResponse,
+  isMhpSyncResponse,
   postMhpApplyRequest,
+  postMhpCancelAllRequest,
   postMhpCreditRequest,
   postMhpLookupRequest,
+  postMhpSyncRequest,
   splitMhpParkingDisplayText,
 } from "@/lib/mhp-extension";
 
@@ -68,6 +72,19 @@ const TICKET_LABELS: Record<string, string> = {
   "30m_cnt": "30m",
 };
 
+const DEFAULT_EMPTY_ROW_COUNT = 5;
+
+function emptyParkingRows(date: string): RowState[] {
+  return Array.from({ length: DEFAULT_EMPTY_ROW_COUNT }, () => ({
+    vehicle_num: "",
+    date,
+    all_day_cnt: 0,
+    "2h_cnt": 0,
+    "1h_cnt": 0,
+    "30m_cnt": 0,
+  }));
+}
+
 export default function ParkingPageClient() {
   const params = useParams();
   const router = useRouter();
@@ -80,14 +97,13 @@ export default function ParkingPageClient() {
   const [togglingSupport, setTogglingSupport] = useState(false);
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedRoomName, setSelectedRoomName] = useState<string>("미지정");
-  const [roomsSummaryLine, setRoomsSummaryLine] = useState("");
   const [periodLabelLine, setPeriodLabelLine] = useState("");
   const [dateList, setDateList] = useState<string[]>([]);
   const [rows, setRows] = useState<RowState[]>([]);
   const vehicleRefs = useRef<(HTMLInputElement | null)[]>([]);
   const ticketRefs = useRef<(HTMLInputElement | null)[][]>([]);
   const mhpPendingRef = useRef<{ requestId: string; index: number; vehicleNum: string } | null>(null);
-  const mhpApplyPendingRef = useRef<{ requestId: string; index: number } | null>(null);
+  const mhpApplyPendingRef = useRef<{ requestId: string; index: number; kind: "sync" | "cancel_all" } | null>(null);
   const mhpCreditPendingRef = useRef<string | null>(null);
   const refreshMhpCreditRef = useRef<() => void>(() => {});
   const [mhpLoadingIndex, setMhpLoadingIndex] = useState<number | null>(null);
@@ -151,17 +167,6 @@ export default function ParkingPageClient() {
           ? periodLabelMonthDayFromSortedYmd(sortedDates)
           : fallbackPeriodFromProject(proj);
       setPeriodLabelLine(period);
-      const byDate = [...rows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-      const seen = new Set<string>();
-      const names: string[] = [];
-      for (const r of byDate) {
-        const n = (r.room_name ?? "").trim() || "미지정";
-        if (!seen.has(n)) {
-          seen.add(n);
-          names.push(n);
-        }
-      }
-      setRoomsSummaryLine(names.length > 0 ? names.join(", ") : "미지정");
     }
 
     if (isDevMode()) {
@@ -269,7 +274,7 @@ export default function ParkingPageClient() {
           "30m_cnt": r["30m_cnt"],
           recordId: r.id,
         }));
-        setRows(list.length ? list : [{ vehicle_num: "", date, all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0 }]);
+        setRows(list.length ? list : emptyParkingRows(date));
         return;
       }
       (async () => {
@@ -289,7 +294,7 @@ export default function ParkingPageClient() {
           "30m_cnt": r["30m_cnt"],
           recordId: r.id,
         }));
-        setRows(list.length ? list : [{ vehicle_num: "", date, all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0 }]);
+        setRows(list.length ? list : emptyParkingRows(date));
       })();
     },
     [projectId, devStore]
@@ -317,6 +322,7 @@ export default function ParkingPageClient() {
         const text = (e.data.parkingTimeText ?? "").trim();
         const { entryAt, duration } = splitMhpParkingDisplayText(text);
         const summary = (e.data.appliedDiscountsSummary ?? "").trim();
+        const counts = e.data.appliedDiscountCounts ?? null;
         setRows((prev) => {
           const row = prev[rowIndex];
           if (!row || !rowVehicleOk(row.vehicle_num)) return prev;
@@ -327,13 +333,19 @@ export default function ParkingPageClient() {
                   mhp_entry_at: entryAt,
                   mhp_parking_duration: duration,
                   mhp_applied_discounts_summary: summary || undefined,
+                  ...(counts
+                    ? {
+                        all_day_cnt: counts.all_day_cnt ?? r.all_day_cnt,
+                        "2h_cnt": counts["2h_cnt"] ?? r["2h_cnt"],
+                        "1h_cnt": counts["1h_cnt"] ?? r["1h_cnt"],
+                        "30m_cnt": counts["30m_cnt"] ?? r["30m_cnt"],
+                      }
+                    : null),
                 }
               : r
           );
         });
-        if (summary) {
-          alert(`이미 주차권 등록된 내역이 있습니다.\n\n${summary}`);
-        }
+        if (summary) alert(`이미 등록된 할인 내역이 있어요.\n${summary}\n\n원하시면 표 수량을 바꾼 뒤 “등록”을 누르면 MHP에 맞게 동기화됩니다.`);
       } else {
         setRows((prev) => {
           const row = prev[rowIndex];
@@ -358,16 +370,30 @@ export default function ParkingPageClient() {
 
   useEffect(() => {
     const onApplyMsg = (e: MessageEvent) => {
-      if (e.source !== window || !isMhpApplyResponse(e.data)) return;
+      if (
+        e.source !== window ||
+        (!isMhpSyncResponse(e.data) && !isMhpCancelAllResponse(e.data) && !isMhpApplyResponse(e.data))
+      )
+        return;
       const pending = mhpApplyPendingRef.current;
       if (!pending || e.data.requestId !== pending.requestId) return;
+      const kind = pending.kind;
       mhpApplyPendingRef.current = null;
       setMhpApplyLoadingIndex(null);
       if (e.data.ok) {
-        alert((e.data.detail || "MHP에 할인 적용을 요청했습니다.").trim());
+        alert((e.data.detail || (kind === "cancel_all" ? "할인 내역을 취소했어요." : "MHP와 수량을 맞췄어요.")).trim());
+        if (kind === "cancel_all") {
+          setRows((prev) =>
+            prev.map((r, i) =>
+              i === pending.index
+                ? { ...r, all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0, mhp_applied_discounts_summary: undefined }
+                : r
+            )
+          );
+        }
         refreshMhpCreditRef.current();
       } else {
-        alert(e.data.error?.trim() || "MHP 등록에 실패했습니다.");
+        alert(e.data.error?.trim() || (kind === "cancel_all" ? "취소에 실패했어요. MHP 콘솔을 확인해 주세요." : "동기화에 실패했어요. MHP 콘솔을 확인해 주세요."));
       }
     };
     window.addEventListener("message", onApplyMsg);
@@ -417,7 +443,7 @@ export default function ParkingPageClient() {
     return () => window.clearInterval(id);
   }, [requestMhpCredit]);
 
-  const requestMhpApply = useCallback(
+  const requestMhpSync = useCallback(
     (index: number) => {
       const row = rows[index];
       const v = String(row?.vehicle_num ?? "").trim().replace(/\D/g, "").slice(0, 4);
@@ -425,42 +451,62 @@ export default function ParkingPageClient() {
         alert("차량 번호 4자리를 입력한 뒤 등록하세요.");
         return;
       }
+      if (!(row?.mhp_entry_at ?? "").trim()) {
+        alert("먼저 조회를 눌러 MHP에서 차량을 불러온 뒤 등록(동기화)하세요.");
+        return;
+      }
       const ad = row?.all_day_cnt ?? 0;
       const h2 = row?.["2h_cnt"] ?? 0;
       const h1 = row?.["1h_cnt"] ?? 0;
       const m30 = row?.["30m_cnt"] ?? 0;
-      if (ad + h2 + h1 + m30 <= 0) {
-        alert("종일·2h·1h·30m 중 최소 하나에 수량을 입력하세요.");
-        return;
-      }
-      const mhpExisting = (row?.mhp_applied_discounts_summary ?? "").trim();
-      if (mhpExisting) {
-        alert(
-          `이미 주차권 등록된 내역이 있습니다.\n\n${mhpExisting}\n\nMHP에서 해당 할인을 확인·처리한 뒤 다시 조회하면 등록할 수 있습니다.`
-        );
-        return;
-      }
       const requestId =
         typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
           : `mhp-apply-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      mhpApplyPendingRef.current = { requestId, index };
+      mhpApplyPendingRef.current = { requestId, index, kind: "sync" };
       setMhpApplyLoadingIndex(index);
-      postMhpApplyRequest(requestId, v, {
+      postMhpSyncRequest(requestId, v, {
         all_day_cnt: ad,
         "2h_cnt": h2,
         "1h_cnt": h1,
         "30m_cnt": m30,
       });
-      const applySteps =
-        (ad > 0 ? 1 : 0) + (h2 > 0 ? 1 : 0) + (h1 > 0 ? 1 : 0) + (m30 > 0 ? 1 : 0);
-      const applyTimeoutMs = 25000 + Math.max(0, applySteps - 1) * 7000;
+      const syncTimeoutMs = 45000;
       window.setTimeout(() => {
         if (mhpApplyPendingRef.current?.requestId !== requestId) return;
         mhpApplyPendingRef.current = null;
         setMhpApplyLoadingIndex((cur) => (cur === index ? null : cur));
         alert("응답이 없습니다. 확장 프로그램과 MHP 탭을 확인하세요.");
-      }, applyTimeoutMs);
+      }, syncTimeoutMs);
+    },
+    [rows]
+  );
+
+  const requestMhpCancelAll = useCallback(
+    (index: number) => {
+      const row = rows[index];
+      const v = String(row?.vehicle_num ?? "").trim().replace(/\D/g, "").slice(0, 4);
+      if (v.length !== 4) {
+        alert("차량 번호 4자리를 입력한 뒤 취소하세요.");
+        return;
+      }
+      if (!(row?.mhp_entry_at ?? "").trim()) {
+        alert("먼저 조회를 눌러 MHP에서 차량을 불러온 뒤 취소하세요.");
+        return;
+      }
+      const requestId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `mhp-cancel-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      mhpApplyPendingRef.current = { requestId, index, kind: "cancel_all" };
+      setMhpApplyLoadingIndex(index);
+      postMhpCancelAllRequest(requestId, v);
+      window.setTimeout(() => {
+        if (mhpApplyPendingRef.current?.requestId !== requestId) return;
+        mhpApplyPendingRef.current = null;
+        setMhpApplyLoadingIndex((cur) => (cur === index ? null : cur));
+        alert("응답이 없습니다. 확장 프로그램과 MHP 탭을 확인하세요.");
+      }, 45000);
     },
     [rows]
   );
@@ -727,7 +773,7 @@ export default function ParkingPageClient() {
                 <span className="text-base font-normal text-[var(--text-muted)]">/ {project.manager}</span>
               </p>
               <p className="text-base font-semibold text-[var(--text)]">
-                공간 : <span className="font-semibold text-[var(--text)]">{roomsSummaryLine || selectedRoomName}</span>
+                공간 : <span className="font-semibold text-[var(--text)]">{selectedRoomName}</span>
               </p>
               <p className="text-lg font-bold tracking-tight text-[var(--text)]">
                 {periodLabelLine || fallbackPeriodFromProject(project)}
@@ -856,7 +902,8 @@ export default function ParkingPageClient() {
                 <col key={k} style={{ width: "2.85rem" }} />
               ))}
               <col style={{ width: "4.25rem" }} />
-              <col style={{ width: "6.5rem" }} />
+              <col style={{ width: "4.25rem" }} />
+              <col style={{ width: "7.25rem" }} />
               <col style={{ width: "2.35rem" }} />
             </colgroup>
             <thead>
@@ -871,7 +918,8 @@ export default function ParkingPageClient() {
                   </th>
                 ))}
                 <th className="pb-3 text-center text-xs font-medium text-[var(--text)]">등록</th>
-                <th className="pb-3 pl-1 font-medium text-[var(--text)]">일자</th>
+                <th className="pb-3 text-center text-xs font-medium text-[var(--text)]">취소</th>
+                <th className="pb-3 pr-2 text-right font-medium text-[var(--text)]">일자</th>
                 <th className="pb-3"></th>
               </tr>
             </thead>
@@ -948,15 +996,28 @@ export default function ParkingPageClient() {
                       type="button"
                       tabIndex={-1}
                       disabled={mhpApplyLoadingIndex !== null || mhpLoadingIndex !== null}
-                      onClick={() => requestMhpApply(index)}
+                      onClick={() => requestMhpSync(index)}
                       className="btn btn-primary inline-flex w-full max-w-[3.75rem] items-center justify-center px-1.5 py-1.5 text-xs whitespace-nowrap shadow-sm disabled:cursor-wait disabled:opacity-60"
-                      title="MHP 콘솔에서 선택한 할인 종류·수량으로 할인 적용(확장 필요)"
-                      aria-label="MHP 할인 등록"
+                      title="앱 표 수량대로 MHP를 취소/추가하여 동기화(확장 필요)"
+                      aria-label="MHP 할인 동기화"
                     >
                       {mhpApplyLoadingIndex === index ? "…" : "등록"}
                     </button>
                   </td>
-                  <td className="py-2 pl-1 pr-0 text-sm text-[var(--text-muted)]">{row.date || selectedDate}</td>
+                  <td className="py-2 px-0.5 text-center align-middle">
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      disabled={mhpApplyLoadingIndex !== null || mhpLoadingIndex !== null}
+                      onClick={() => requestMhpCancelAll(index)}
+                      className="btn inline-flex w-full max-w-[3.75rem] items-center justify-center px-1.5 py-1.5 text-xs whitespace-nowrap disabled:cursor-wait disabled:opacity-60"
+                      title="MHP에 등록된 미사용 할인 전체 취소(확장 필요)"
+                      aria-label="MHP 전체 취소"
+                    >
+                      취소
+                    </button>
+                  </td>
+                  <td className="py-2 pr-2 text-right text-sm text-[var(--text-muted)]">{row.date || selectedDate}</td>
                   <td className="w-12 py-2 pl-1">
                     {(row.recordId || row.vehicle_num?.trim()) && (
                       <button
@@ -977,7 +1038,7 @@ export default function ParkingPageClient() {
                       colSpan={
                         4 +
                         TICKET_KEYS.length +
-                        3
+                        4
                       }
                       className="border-t border-amber-200/80 bg-amber-50/90 px-3 py-2 text-xs leading-relaxed text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/35 dark:text-amber-100"
                     >

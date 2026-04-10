@@ -687,6 +687,12 @@ export default function HomePage() {
                         selectedProjectId === p.id ? "bg-[#EFF6FF] border-[#CFE0FF]" : ""
                       }`}
                       onClick={() => setSelectedProjectId(p.id)}
+                      onDoubleClick={(e) => {
+                        if (listMode !== "active") return;
+                        const t = e.target as HTMLElement;
+                        if (t.closest("a, button, [data-action-menu-root]")) return;
+                        router.push(`/projects/${p.id}/parking`);
+                      }}
                       role="button"
                       tabIndex={0}
                       onKeyDown={(e) => {

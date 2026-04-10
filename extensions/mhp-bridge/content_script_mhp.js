@@ -527,6 +527,83 @@
     return countsToSummaryParts(counts);
   }
 
+  /** DOM 기반: 활성(미사용) 할인 카드들을 권종별로 수집 */
+  function readMhpActiveDiscountStateFromDom() {
+    const scope = findMhpDiscountHistoryScope();
+    if (!scope) return { counts: { all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0, other: 0 }, cards: [] };
+
+    function normTxt(s) {
+      return String(s || "")
+        .trim()
+        .replace(/\u00a0/g, " ")
+        .replace(/[\u200b-\u200d\ufeff]/g, "");
+    }
+
+    function cardTypeKey(cardText) {
+      const t = String(cardText || "").replace(/\s+/g, " ").trim();
+      if (!t) return "other";
+      if (t.includes("당일권")) return "all_day_cnt";
+      if (t.includes("2시간")) return "2h_cnt";
+      if (t.includes("1시간")) return "1h_cnt";
+      if (t.includes("30분")) return "30m_cnt";
+      return "other";
+    }
+
+    function isActiveUnused(card) {
+      const oranges = card.querySelectorAll("span.text-orange-600, span[class*='text-orange-600']");
+      for (let oi = 0; oi < oranges.length; oi++) {
+        const o = oranges[oi];
+        let raw = "";
+        for (const ch of o.children) {
+          if (ch.tagName === "SPAN") {
+            raw = normTxt(ch.textContent);
+            break;
+          }
+        }
+        if (!raw) raw = normTxt(o.textContent);
+        if (raw === "미사용") return true;
+      }
+      return false;
+    }
+
+    function findCancelButton(card) {
+      const btns = card.querySelectorAll("button, [role='button']");
+      for (const b of btns) {
+        const t = (b.textContent || "").replace(/\s+/g, " ").trim();
+        if (t.includes("할인") && t.includes("취소")) return b;
+      }
+      return null;
+    }
+
+    let cards;
+    try {
+      cards = scope.querySelectorAll(MHP_DISCOUNT_CARD_SEL);
+    } catch (_) {
+      return { counts: { all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0, other: 0 }, cards: [] };
+    }
+    if (!cards.length) {
+      try {
+        cards = scope.querySelectorAll("div.relative.flex[class*='flex-col'][class*='gap-2']");
+      } catch (_) {
+        return { counts: { all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0, other: 0 }, cards: [] };
+      }
+    }
+
+    const outCards = [];
+    const counts = { all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0, other: 0 };
+    for (let ci = 0; ci < cards.length; ci++) {
+      const card = cards[ci];
+      if (!(card instanceof HTMLElement)) continue;
+      if (!isActiveUnused(card)) continue;
+      const text = (card.innerText || "").replace(/\r/g, "").replace(/\s+/g, " ").trim();
+      const key = cardTypeKey(text);
+      counts[key] = (counts[key] || 0) + 1;
+      const cancelBtn = findCancelButton(card);
+      outCards.push({ key, text, cancelBtn });
+    }
+    return { counts, cards: outCards };
+  }
+
   /** innerText 슬라이스 기반 (DOM 실패 시 보조) */
   function readMhpActiveDiscountSummaryFromText() {
     const raw = (document.body?.innerText || "").replace(/\r/g, "");
@@ -718,6 +795,7 @@
           parkingTimeText: text || "",
           error: err,
           appliedDiscountsSummary: "",
+          appliedDiscountCounts: null,
         });
         return;
       }
@@ -737,8 +815,21 @@
         return scoreSummary(sb) > scoreSummary(sa) ? sb : sa;
       }
       let bestSummary = readMhpActiveDiscountSummary();
+      let bestCounts = null;
       const flush = () => {
         bestSummary = richer(bestSummary, readMhpActiveDiscountSummary());
+        try {
+          const st = readMhpActiveDiscountStateFromDom();
+          const c = st?.counts || null;
+          if (c) {
+            bestCounts = {
+              all_day_cnt: Number(c.all_day_cnt) || 0,
+              "2h_cnt": Number(c["2h_cnt"]) || 0,
+              "1h_cnt": Number(c["1h_cnt"]) || 0,
+              "30m_cnt": Number(c["30m_cnt"]) || 0,
+            };
+          }
+        } catch (_) {}
       };
       const sendOk = () => {
         chrome.runtime.sendMessage({
@@ -749,6 +840,7 @@
           parkingTimeText: text || "",
           error: err || "",
           appliedDiscountsSummary: bestSummary,
+          appliedDiscountCounts: bestCounts,
         });
       };
       flush();
@@ -894,6 +986,29 @@
     });
   }
 
+  function sendSyncResult(appTabId, requestId, ok, error, detail, diff) {
+    chrome.runtime.sendMessage({
+      type: "MHP_SYNC_RESULT",
+      appTabId,
+      requestId,
+      ok: !!ok,
+      error: error || "",
+      detail: detail || "",
+      diff: diff || null,
+    });
+  }
+
+  function sendCancelAllResult(appTabId, requestId, ok, error, detail) {
+    chrome.runtime.sendMessage({
+      type: "MHP_CANCEL_ALL_RESULT",
+      appTabId,
+      requestId,
+      ok: !!ok,
+      error: error || "",
+      detail: detail || "",
+    });
+  }
+
   /** MHP 라디오: 당일권(앱 종일) / 2시간 / 1시간 / 30분 할인권 */
   function rowMatchesDiscount(t, fragment) {
     if (fragment === "당일권") return t.includes("당일권");
@@ -953,6 +1068,136 @@
 
   function delay(ms) {
     return new Promise((res) => setTimeout(res, ms));
+  }
+
+  async function waitUntil(predicate, timeoutMs) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        if (predicate()) return true;
+      } catch (_) {}
+      await delay(140);
+    }
+    return false;
+  }
+
+  async function cancelOneCard(cardInfo) {
+    const btn = cardInfo?.cancelBtn;
+    if (!btn) throw new Error("「할인 취소」버튼을 찾지 못했습니다.");
+    btn.click();
+    /** 취소 완료/반영 대기: 미사용 배지가 사라지거나 적용 취소로 바뀌면 OK */
+    const ok = await waitUntil(() => {
+      const root = findMhpDiscountHistoryScope();
+      if (!root) return true;
+      // 버튼이 속한 카드가 다시 렌더되며 btn이 stale 될 수 있으므로, 텍스트 기반으로만 판단
+      const t = (document.body?.innerText || "").replace(/\r/g, "");
+      // 너무 넓지만, 개별 취소 후 화면이 바뀌면 보통 미사용 카운트가 줄거나 적용 취소가 늘어남
+      return /적용\s*취소/.test(t) || !/미사용/.test(t);
+    }, 5500);
+    if (!ok) throw new Error("할인 취소 반영을 확인하지 못했습니다.");
+  }
+
+  async function cancelActiveDiscountsByKey(key, countToCancel) {
+    let remaining = Math.max(0, Number(countToCancel) || 0);
+    while (remaining > 0) {
+      const state = readMhpActiveDiscountStateFromDom();
+      const pool = state.cards.filter((c) => c.key === key);
+      if (!pool.length) break;
+      await cancelOneCard(pool[0]);
+      remaining -= 1;
+      await delay(220);
+    }
+    return remaining === 0;
+  }
+
+  async function cancelAllActiveDiscounts() {
+    const state = readMhpActiveDiscountStateFromDom();
+    if ((state.counts.other || 0) > 0) {
+      throw new Error("MHP에 알 수 없는(기타) 미사용 할인이 있어 전체 취소를 자동 처리할 수 없습니다. 콘솔에서 확인하세요.");
+    }
+    const total =
+      (state.counts.all_day_cnt || 0) +
+      (state.counts["2h_cnt"] || 0) +
+      (state.counts["1h_cnt"] || 0) +
+      (state.counts["30m_cnt"] || 0);
+    if (total <= 0) return { cancelled: 0 };
+
+    let cancelled = 0;
+    for (const k of ["all_day_cnt", "2h_cnt", "1h_cnt", "30m_cnt"]) {
+      const need = state.counts[k] || 0;
+      for (let i = 0; i < need; i++) {
+        const ok = await cancelActiveDiscountsByKey(k, 1);
+        if (!ok) throw new Error("할인 취소에 실패했습니다. MHP 콘솔에서 상태를 확인하세요.");
+        cancelled += 1;
+      }
+    }
+    return { cancelled };
+  }
+
+  function typeKeyToFragment(k) {
+    if (k === "all_day_cnt") return "당일권";
+    if (k === "2h_cnt") return "2시간";
+    if (k === "1h_cnt") return "1시간";
+    if (k === "30m_cnt") return "30분";
+    return "";
+  }
+
+  async function syncDiscountsToTarget(targetCounts) {
+    const target = {
+      all_day_cnt: Math.max(0, Number(targetCounts?.all_day_cnt) || 0),
+      "2h_cnt": Math.max(0, Number(targetCounts?.["2h_cnt"]) || 0),
+      "1h_cnt": Math.max(0, Number(targetCounts?.["1h_cnt"]) || 0),
+      "30m_cnt": Math.max(0, Number(targetCounts?.["30m_cnt"]) || 0),
+    };
+
+    const cur = readMhpActiveDiscountStateFromDom();
+    if ((cur.counts.other || 0) > 0) {
+      throw new Error("MHP에 알 수 없는(기타) 미사용 할인이 있어 동기화를 자동 처리할 수 없습니다. 콘솔에서 확인하세요.");
+    }
+
+    const current = {
+      all_day_cnt: cur.counts.all_day_cnt || 0,
+      "2h_cnt": cur.counts["2h_cnt"] || 0,
+      "1h_cnt": cur.counts["1h_cnt"] || 0,
+      "30m_cnt": cur.counts["30m_cnt"] || 0,
+    };
+
+    const cancelPlan = {
+      all_day_cnt: Math.max(0, current.all_day_cnt - target.all_day_cnt),
+      "2h_cnt": Math.max(0, current["2h_cnt"] - target["2h_cnt"]),
+      "1h_cnt": Math.max(0, current["1h_cnt"] - target["1h_cnt"]),
+      "30m_cnt": Math.max(0, current["30m_cnt"] - target["30m_cnt"]),
+    };
+    const addPlan = {
+      all_day_cnt: Math.max(0, target.all_day_cnt - current.all_day_cnt),
+      "2h_cnt": Math.max(0, target["2h_cnt"] - current["2h_cnt"]),
+      "1h_cnt": Math.max(0, target["1h_cnt"] - current["1h_cnt"]),
+      "30m_cnt": Math.max(0, target["30m_cnt"] - current["30m_cnt"]),
+    };
+
+    let cancelled = 0;
+    let added = 0;
+
+    // cancel first
+    for (const k of ["all_day_cnt", "2h_cnt", "1h_cnt", "30m_cnt"]) {
+      const need = cancelPlan[k] || 0;
+      if (!need) continue;
+      const ok = await cancelActiveDiscountsByKey(k, need);
+      if (!ok) throw new Error("할인 취소에 실패했습니다. MHP 콘솔에서 상태를 확인하세요.");
+      cancelled += need;
+    }
+
+    // then add deltas
+    for (const k of ["all_day_cnt", "2h_cnt", "1h_cnt", "30m_cnt"]) {
+      const need = addPlan[k] || 0;
+      if (!need) continue;
+      const frag = typeKeyToFragment(k);
+      if (!frag) continue;
+      await applyOneDiscount(frag, need);
+      added += need;
+    }
+
+    return { cancelled, added, before: current, target };
   }
 
   async function applyOneDiscount(frag, qty) {
@@ -1065,6 +1310,47 @@
     })();
   }
 
+  function runSync(msg) {
+    const { requestId, appTabId } = msg;
+    const target = {
+      all_day_cnt: Number(msg?.all_day_cnt) || 0,
+      "2h_cnt": Number(msg?.cnt_2h) || 0,
+      "1h_cnt": Number(msg?.cnt_1h) || 0,
+      "30m_cnt": Number(msg?.cnt_30m) || 0,
+    };
+
+    void (async () => {
+      try {
+        const r = await syncDiscountsToTarget(target);
+        const detail =
+          `동기화를 완료했습니다. (취소 ${r.cancelled}건, 추가 ${r.added}건)\n` +
+          `현재: 종일 ${r.before.all_day_cnt}, 2h ${r.before["2h_cnt"]}, 1h ${r.before["1h_cnt"]}, 30m ${r.before["30m_cnt"]}\n` +
+          `목표: 종일 ${r.target.all_day_cnt}, 2h ${r.target["2h_cnt"]}, 1h ${r.target["1h_cnt"]}, 30m ${r.target["30m_cnt"]}`;
+        sendSyncResult(appTabId, requestId, true, "", detail, { cancelled: r.cancelled, added: r.added });
+      } catch (e) {
+        sendSyncResult(appTabId, requestId, false, e?.message || String(e), "", null);
+      }
+    })();
+  }
+
+  function runCancelAll(msg) {
+    const { requestId, appTabId } = msg;
+    void (async () => {
+      try {
+        const r = await cancelAllActiveDiscounts();
+        sendCancelAllResult(
+          appTabId,
+          requestId,
+          true,
+          "",
+          r.cancelled ? `미사용 할인 ${r.cancelled}건을 취소했습니다.` : "취소할 미사용 할인 내역이 없습니다."
+        );
+      } catch (e) {
+        sendCancelAllResult(appTabId, requestId, false, e?.message || String(e), "");
+      }
+    })();
+  }
+
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "EXECUTE_MHP_LOOKUP") {
       sendResponse({ received: true });
@@ -1074,6 +1360,16 @@
     if (msg.type === "EXECUTE_MHP_APPLY") {
       sendResponse({ received: true });
       runApply(msg);
+      return false;
+    }
+    if (msg.type === "EXECUTE_MHP_SYNC") {
+      sendResponse({ received: true });
+      runSync(msg);
+      return false;
+    }
+    if (msg.type === "EXECUTE_MHP_CANCEL_ALL") {
+      sendResponse({ received: true });
+      runCancelAll(msg);
       return false;
     }
     if (msg.type === "EXECUTE_MHP_CREDIT") {

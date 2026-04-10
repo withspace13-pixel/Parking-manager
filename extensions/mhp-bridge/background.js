@@ -79,9 +79,25 @@ function injectMhpAndSend(mhpTabId, mhpPayload, appTabId, requestId, kind) {
 function deliverToApp(appTabId, payload) {
   if (!appTabId) return;
   const kind =
-    payload.kind === "apply" ? "apply" : payload.kind === "credit" ? "credit" : "lookup";
+    payload.kind === "apply"
+      ? "apply"
+      : payload.kind === "sync"
+        ? "sync"
+        : payload.kind === "cancel_all"
+          ? "cancel_all"
+          : payload.kind === "credit"
+            ? "credit"
+            : "lookup";
   const innerType =
-    kind === "apply" ? "MHP_APPLY_RESPONSE" : kind === "credit" ? "MHP_CREDIT_RESPONSE" : "MHP_LOOKUP_RESPONSE";
+    kind === "apply"
+      ? "MHP_APPLY_RESPONSE"
+      : kind === "sync"
+        ? "MHP_SYNC_RESPONSE"
+        : kind === "cancel_all"
+          ? "MHP_CANCEL_ALL_RESPONSE"
+          : kind === "credit"
+            ? "MHP_CREDIT_RESPONSE"
+            : "MHP_LOOKUP_RESPONSE";
   const envelope = {
     type: "MHP_PORT_DELIVER",
     innerType,
@@ -92,6 +108,8 @@ function deliverToApp(appTabId, payload) {
     creditText: payload.creditText ?? "",
     error: payload.error ?? "",
     detail: payload.detail ?? "",
+    diff: payload.diff ?? null,
+    appliedDiscountCounts: payload.appliedDiscountCounts ?? null,
   };
 
   chrome.tabs.sendMessage(appTabId, envelope, () => {
@@ -111,6 +129,8 @@ function deliverToApp(appTabId, payload) {
               creditText: p.creditText,
               error: p.error,
               detail: p.detail,
+              diff: p.diff,
+              appliedDiscountCounts: p.appliedDiscountCounts,
             },
             "*"
           );
@@ -125,6 +145,8 @@ function deliverToApp(appTabId, payload) {
             creditText: envelope.creditText,
             error: envelope.error,
             detail: envelope.detail,
+            diff: envelope.diff,
+            appliedDiscountCounts: envelope.appliedDiscountCounts,
           },
         ],
         world: "MAIN",
@@ -206,6 +228,77 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
+  if (msg.type === "SYNC_FROM_APP") {
+    const { requestId, vehicleNum, all_day_cnt, cnt_2h, cnt_1h, cnt_30m } = msg;
+    const appTabId = sender.tab?.id;
+    if (!appTabId) {
+      sendResponse({ ok: false });
+      return false;
+    }
+    sendResponse({ ok: true });
+
+    chrome.tabs.query({}, (tabs) => {
+      const mhpTabId = findMhpTabId(tabs, appTabId);
+      if (!mhpTabId) {
+        deliverToApp(appTabId, {
+          requestId,
+          ok: false,
+          kind: "sync",
+          error: "MHP 콘솔 탭을 찾지 못했습니다. MHP 탭을 연 뒤 다시 시도하세요.",
+        });
+        return;
+      }
+      injectMhpAndSend(
+        mhpTabId,
+        {
+          type: "EXECUTE_MHP_SYNC",
+          requestId,
+          appTabId,
+          vehicleNum,
+          all_day_cnt: Number(all_day_cnt) || 0,
+          cnt_2h: Number(cnt_2h) || 0,
+          cnt_1h: Number(cnt_1h) || 0,
+          cnt_30m: Number(cnt_30m) || 0,
+        },
+        appTabId,
+        requestId,
+        "sync"
+      );
+    });
+    return false;
+  }
+
+  if (msg.type === "CANCEL_ALL_FROM_APP") {
+    const { requestId, vehicleNum } = msg;
+    const appTabId = sender.tab?.id;
+    if (!appTabId) {
+      sendResponse({ ok: false });
+      return false;
+    }
+    sendResponse({ ok: true });
+
+    chrome.tabs.query({}, (tabs) => {
+      const mhpTabId = findMhpTabId(tabs, appTabId);
+      if (!mhpTabId) {
+        deliverToApp(appTabId, {
+          requestId,
+          ok: false,
+          kind: "cancel_all",
+          error: "MHP 콘솔 탭을 찾지 못했습니다. MHP 탭을 연 뒤 다시 시도하세요.",
+        });
+        return;
+      }
+      injectMhpAndSend(
+        mhpTabId,
+        { type: "EXECUTE_MHP_CANCEL_ALL", requestId, appTabId, vehicleNum },
+        appTabId,
+        requestId,
+        "cancel_all"
+      );
+    });
+    return false;
+  }
+
   if (msg.type === "CREDIT_FROM_APP") {
     const { requestId } = msg;
     const appTabId = sender.tab?.id;
@@ -239,13 +332,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "MHP_LOOKUP_RESULT") {
-    const { appTabId, requestId, ok, parkingTimeText, error, appliedDiscountsSummary } = msg;
+    const { appTabId, requestId, ok, parkingTimeText, error, appliedDiscountsSummary, appliedDiscountCounts } = msg;
     deliverToApp(appTabId, {
       requestId,
       ok: !!ok,
       kind: "lookup",
       parkingTimeText: parkingTimeText ?? "",
       appliedDiscountsSummary: appliedDiscountsSummary ?? "",
+      appliedDiscountCounts: appliedDiscountCounts ?? null,
       error,
     });
     return false;
@@ -257,6 +351,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       requestId,
       ok: !!ok,
       kind: "apply",
+      error: error ?? "",
+      detail: detail ?? "",
+    });
+    return false;
+  }
+
+  if (msg.type === "MHP_SYNC_RESULT") {
+    const { appTabId, requestId, ok, error, detail, diff } = msg;
+    deliverToApp(appTabId, {
+      requestId,
+      ok: !!ok,
+      kind: "sync",
+      error: error ?? "",
+      detail: detail ?? "",
+      diff: diff ?? null,
+    });
+    return false;
+  }
+
+  if (msg.type === "MHP_CANCEL_ALL_RESULT") {
+    const { appTabId, requestId, ok, error, detail } = msg;
+    deliverToApp(appTabId, {
+      requestId,
+      ok: !!ok,
+      kind: "cancel_all",
       error: error ?? "",
       detail: detail ?? "",
     });
