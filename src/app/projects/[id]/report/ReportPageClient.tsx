@@ -175,6 +175,7 @@ export default function ReportPageClient() {
     }
     if (includeWeekendsInSettlement) return raw;
     return raw.filter((ymd) => {
+      if (eventDateSet.has(ymd)) return true;
       const [y, m, d] = ymd.split("-").map(Number);
       const day = new Date(y, m - 1, d).getDay();
       return day !== 0 && day !== 6;
