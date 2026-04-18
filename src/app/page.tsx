@@ -27,6 +27,7 @@ import {
   periodLabelMonthDayFromSortedYmd,
   periodLabelShortYmdFromSortedYmd,
 } from "@/lib/schedule-dates";
+import { compareMainEventListByRoom } from "@/lib/main-event-room-sort";
 import { isArchivedProjectExpiredForPurge } from "@/lib/archive-retention";
 import { ParkingSection } from "@/components/ParkingSection";
 import { Badge } from "@/components/ui/Badge";
@@ -308,20 +309,24 @@ export default function HomePage() {
     });
   }, [projectsForDate, supportFilter]);
 
-  const projectsWithRoom: ProjectWithRoom[] = useMemo(
-    () =>
-      projectsForDateWithFilter.map((p) => ({
-        ...p,
-        roomName: roomByProjectId[p.id] ?? "미지정",
-      })),
-    [projectsForDateWithFilter, roomByProjectId]
-  );
+  const projectsWithRoom: ProjectWithRoom[] = useMemo(() => {
+    const list = projectsForDateWithFilter.map((p) => ({
+      ...p,
+      roomName: roomByProjectId[p.id] ?? "미지정",
+    }));
+    list.sort((a, b) =>
+      compareMainEventListByRoom(
+        { roomName: a.roomName, org_name: a.org_name, manager: a.manager },
+        { roomName: b.roomName, org_name: b.org_name, manager: b.manager }
+      )
+    );
+    return list;
+  }, [projectsForDateWithFilter, roomByProjectId]);
 
   const selectedProjectForPicker = useMemo(() => {
-    const list = projectsForDateWithFilter;
     if (!selectedProjectId) return null;
-    return list.find((p) => p.id === selectedProjectId) ?? null;
-  }, [projectsForDateWithFilter, selectedProjectId]);
+    return projectsWithRoom.find((p) => p.id === selectedProjectId) ?? null;
+  }, [projectsWithRoom, selectedProjectId]);
 
   useEffect(() => {
     if (!projectPickerOpen) return;
@@ -613,11 +618,11 @@ export default function HomePage() {
                     className="absolute z-50 mt-2 w-full overflow-hidden rounded-xl border border-[var(--border)] bg-white shadow-lg"
                   >
                     <div className="max-h-72 overflow-auto py-1">
-                      {projectsForDateWithFilter.length === 0 ? (
+                      {projectsWithRoom.length === 0 ? (
                         <div className="px-3 py-2 text-sm text-[var(--text-muted)]">선택 가능한 행사가 없습니다.</div>
                       ) : (
-                        projectsForDateWithFilter.map((p) => {
-                          const room = roomByProjectId[p.id] ?? "미지정";
+                        projectsWithRoom.map((p) => {
+                          const room = p.roomName;
                           const active = selectedProjectId === p.id;
                           return (
                             <button

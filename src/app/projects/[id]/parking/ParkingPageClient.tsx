@@ -85,6 +85,12 @@ function emptyParkingRows(date: string): RowState[] {
   }));
 }
 
+/** 저장된 행 + 빈 행을 합쳐 최소 `DEFAULT_EMPTY_ROW_COUNT`줄 유지 */
+function padRowsToMinEmpty(list: RowState[], date: string): RowState[] {
+  if (list.length >= DEFAULT_EMPTY_ROW_COUNT) return list;
+  return [...list, ...emptyParkingRows(date).slice(0, DEFAULT_EMPTY_ROW_COUNT - list.length)];
+}
+
 export default function ParkingPageClient() {
   const params = useParams();
   const router = useRouter();
@@ -274,7 +280,7 @@ export default function ParkingPageClient() {
           "30m_cnt": r["30m_cnt"],
           recordId: r.id,
         }));
-        setRows(list.length ? list : emptyParkingRows(date));
+        setRows(padRowsToMinEmpty(list, date));
         return;
       }
       (async () => {
@@ -294,7 +300,7 @@ export default function ParkingPageClient() {
           "30m_cnt": r["30m_cnt"],
           recordId: r.id,
         }));
-        setRows(list.length ? list : emptyParkingRows(date));
+        setRows(padRowsToMinEmpty(list, date));
       })();
     },
     [projectId, devStore]
