@@ -5,10 +5,10 @@
       "static/chunks/main-app.js",
       "static/chunks/app/global-error.js"
     ],
-    "/page": [
+    "/projects/[id]/settlement/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/page.js"
+      "static/chunks/app/projects/[id]/settlement/page.js"
     ],
     "/layout": [
       "static/chunks/webpack.js",
@@ -21,15 +21,20 @@
       "static/chunks/main-app.js",
       "static/chunks/app/error.js"
     ],
+    "/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/page.js"
+    ],
     "/projects/[id]/parking/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/projects/[id]/parking/page.js"
     ],
-    "/projects/[id]/settlement/page": [
+    "/projects/[id]/report/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/projects/[id]/settlement/page.js"
+      "static/chunks/app/projects/[id]/report/page.js"
     ]
   }
 }

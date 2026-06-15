@@ -54,6 +54,175 @@
     return null;
   }
 
+  function isElementVisible(el) {
+    if (!el || !(el instanceof Element)) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 6 || r.height < 6) return false;
+    const st = getComputedStyle(el);
+    return st.display !== "none" && st.visibility !== "hidden" && Number(st.opacity) > 0.05;
+  }
+
+  function findClickableAncestor(el) {
+    if (!el) return null;
+    return el.closest('a, button, [role="button"]') || el;
+  }
+
+  /** MHP 좌상단 mhp console 로고 (사이드바 상단) */
+  function findMhpConsoleBrandClickable() {
+    const nodes = document.querySelectorAll("a, button, div, span, img, p, h1, h2");
+    const limit = Math.min(nodes.length, 500);
+    for (let i = 0; i < limit; i++) {
+      const el = nodes[i];
+      const t = normSpaces(el.textContent || "");
+      if (!/mhp\s*console/i.test(t)) continue;
+      if (t.length > 64) continue;
+      const r = el.getBoundingClientRect();
+      if (r.top > 130 || r.left > 240) continue;
+      const clickable = findClickableAncestor(el) || el;
+      if (isElementVisible(clickable)) return clickable;
+    }
+    return null;
+  }
+
+  /** MHP 상단·사이드 로고(홈) — 좌표 대신 DOM 클릭 */
+  function findMhpHomeLogoClickable() {
+    const brand = findMhpConsoleBrandClickable();
+    if (brand) return brand;
+
+    const selectors = [
+      'a[class*="logo" i]',
+      '[class*="logo" i] a',
+      'header a img',
+      'nav a img',
+      'img[alt*="logo" i]',
+      'img[class*="logo" i]',
+      'img[src*="logo" i]',
+      '[class*="brand" i] a',
+      'a[href="/"]',
+    ];
+    for (const sel of selectors) {
+      try {
+        const nodes = document.querySelectorAll(sel);
+        for (const node of nodes) {
+          const el =
+            node instanceof HTMLImageElement ? findClickableAncestor(node) : findClickableAncestor(node) || node;
+          if (el && isElementVisible(el)) return el;
+        }
+      } catch (_) {}
+    }
+    const imgs = document.querySelectorAll('header img, nav img, [class*="header" i] img, [class*="sidebar" i] img');
+    for (const img of imgs) {
+      const r = img.getBoundingClientRect();
+      if (r.top > 140 || r.left > 280) continue;
+      if (r.width < 18 || r.height < 10) continue;
+      const el = findClickableAncestor(img);
+      if (el && isElementVisible(el)) return el;
+    }
+    return null;
+  }
+
+  /** 로고가 다른 화면으로 가는 경우 대비 — 사이드 「주차 할인」 메뉴 */
+  function findMhpDiscountMenuClickable() {
+    const nodes = document.querySelectorAll('a, button, [role="button"], li, span, div');
+    const limit = Math.min(nodes.length, 900);
+    for (let i = 0; i < limit; i++) {
+      const el = nodes[i];
+      const t = normSpaces(el.textContent || "");
+      if (t !== "주차 할인" && t !== "주차할인") continue;
+      if ((el.innerText || "").length > 24) continue;
+      if (!isElementVisible(el)) continue;
+      return findClickableAncestor(el) || el;
+    }
+    return null;
+  }
+
+  function nativeClick(el) {
+    try {
+      el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+      el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
+      el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+      el.click();
+    } catch (_) {
+      try {
+        el.click();
+      } catch (_2) {}
+    }
+  }
+
+  /** 주차 할인(4자리 입력) 화면이 아니면 로고·메뉴로 이동 후 입력칸 대기 */
+  function waitForCarInput(maxMs) {
+    const first = findCarInput();
+    if (first) return Promise.resolve(first);
+    const deadline = Date.now() + maxMs;
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (input) => {
+        if (done) return;
+        done = true;
+        clearInterval(timer);
+        try {
+          obs.disconnect();
+        } catch (_) {}
+        resolve(input || null);
+      };
+      const tick = () => {
+        const input = findCarInput();
+        if (input) finish(input);
+        else if (Date.now() >= deadline) finish(null);
+      };
+      const obs = new MutationObserver(tick);
+      try {
+        obs.observe(document.documentElement, { subtree: true, childList: true, characterData: true });
+      } catch (_) {}
+      const timer = setInterval(tick, 15);
+      tick();
+    });
+  }
+
+  /** 이전 조회 차량이 화면에 남아 있는지 (빈 입력 안내 화면이 아님) */
+  function mhpHasLoadedVehicle() {
+    try {
+      const t = readMhpResultText();
+      if (t && String(t).trim().length > 4) return true;
+    } catch (_) {}
+    const body = (document.body?.innerText || "").replace(/\r/g, "");
+    if (/입차\s*일시/.test(body) && !/4자리\s*차량\s*번호를\s*입력/.test(body)) return true;
+    return false;
+  }
+
+  /** 조회 전 화면 준비: 다른 메뉴·이전 차량 잔존 시 로고로 초기화(새로고침) */
+  async function ensureLookupReadyPage() {
+    const onMain = !!findCarInput();
+    const needReset = !onMain || mhpHasLoadedVehicle();
+
+    if (!needReset) {
+      return findCarInput();
+    }
+
+    const NAV_LOGO_MS = 1100;
+    const NAV_FALLBACK_MS = 700;
+    const NAV_TOTAL_MS = 2600;
+
+    const logo = findMhpHomeLogoClickable();
+    if (logo) {
+      nativeClick(logo);
+      const input = await waitForCarInput(NAV_LOGO_MS);
+      if (input) return input;
+    }
+
+    if (!onMain) {
+      const menu = findMhpDiscountMenuClickable();
+      if (menu) {
+        nativeClick(menu);
+        const input = await waitForCarInput(NAV_FALLBACK_MS);
+        if (input) return input;
+      }
+    }
+
+    return waitForCarInput(NAV_TOTAL_MS);
+  }
+
   function setInputValue(el, value) {
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const desc = Object.getOwnPropertyDescriptor(proto, "value");
@@ -942,20 +1111,6 @@
     const { vehicleNum, requestId, appTabId } = msg;
     const v = String(vehicleNum || "").replace(/\D/g, "").slice(0, 4);
 
-    const input = findCarInput();
-    if (!input) {
-      chrome.runtime.sendMessage({
-        type: "MHP_LOOKUP_RESULT",
-        appTabId,
-        requestId,
-        ok: false,
-        parkingTimeText: "",
-        error:
-          "차량 번호 입력칸을 찾지 못했습니다. MHP에서 「주차 할인」화면·4자리 입력 칸이 보이는지 확인하세요.",
-      });
-      return;
-    }
-
     if (v.length !== 4) {
       chrome.runtime.sendMessage({
         type: "MHP_LOOKUP_RESULT",
@@ -968,11 +1123,26 @@
       return;
     }
 
-    const beforeText = readMhpResultText();
+    void (async () => {
+      const input = await ensureLookupReadyPage();
+      if (!input) {
+        chrome.runtime.sendMessage({
+          type: "MHP_LOOKUP_RESULT",
+          appTabId,
+          requestId,
+          ok: false,
+          parkingTimeText: "",
+          error:
+            "차량 번호 입력칸을 찾지 못했습니다. MHP에서 「주차 할인」화면·4자리 입력 칸이 보이는지 확인하세요.",
+        });
+        return;
+      }
 
-    typeFourDigitsThen(input, v, () => {
-      waitForResult(beforeText, requestId, appTabId, v);
-    });
+      const beforeText = readMhpResultText();
+      typeFourDigitsThen(input, v, () => {
+        waitForResult(beforeText, requestId, appTabId, v);
+      });
+    })();
   }
 
   function sendApplyResult(appTabId, requestId, ok, error, detail) {

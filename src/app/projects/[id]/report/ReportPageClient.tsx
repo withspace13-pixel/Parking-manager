@@ -7,7 +7,13 @@ import { ArrowLeft, Calculator, Download, Home } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { datesYmdToConsecutiveRanges, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
-import { supabase, TICKET_PRICES } from "@/lib/supabase";
+import {
+  calcParkingRecordAmount,
+  computeSettlementTotals,
+  freeCarsFootnoteLabel,
+  freeCarsSummaryLabel,
+} from "@/lib/settlement-calc";
+import { supabase } from "@/lib/supabase";
 import type { Project, ParkingRecord } from "@/lib/supabase";
 
 function getDateRange(start: string, end: string): string[] {
@@ -18,25 +24,6 @@ function getDateRange(start: string, end: string): string[] {
     dates.push(d.toISOString().slice(0, 10));
   }
   return dates;
-}
-
-type DayFree = ParkingRecord & { amount: number };
-type DaySummary = {
-  date: string;
-  all_day_cnt: number;
-  "2h_cnt": number;
-  "1h_cnt": number;
-  "30m_cnt": number;
-  amount: number;
-};
-
-function calcAmount(r: Pick<ParkingRecord, "all_day_cnt" | "2h_cnt" | "1h_cnt" | "30m_cnt">) {
-  return (
-    r.all_day_cnt * TICKET_PRICES.all_day +
-    r["2h_cnt"] * TICKET_PRICES["2h"] +
-    r["1h_cnt"] * TICKET_PRICES["1h"] +
-    r["30m_cnt"] * TICKET_PRICES["30m"]
-  );
 }
 
 /** YYYY-MM-DD → YY-MM-DD (상단 사용 일자용) */
@@ -102,9 +89,12 @@ export default function ReportPageClient() {
   const [eventDates, setEventDates] = useState<string[]>([]);
   const pdfExportRef = useRef<HTMLDivElement>(null);
   const [pdfSaving, setPdfSaving] = useState(false);
+  const [hideSettlementControlsForPdf, setHideSettlementControlsForPdf] = useState(false);
   const [settlementEditorOpen, setSettlementEditorOpen] = useState(false);
   const [settlementRanges, setSettlementRanges] = useState<Array<{ start: string; end: string }>>([]);
   const [includeWeekendsInSettlement, setIncludeWeekendsInSettlement] = useState(false);
+  /** 일자별 무료 처리 대수(당일 발급액 상위 N대, 기본 1) */
+  const [freeCarsPerDay, setFreeCarsPerDay] = useState(1);
 
   const dateList = useMemo(
     () => (project?.start_date && project?.end_date ? getDateRange(project.start_date, project.end_date) : []),
@@ -219,70 +209,10 @@ export default function ReportPageClient() {
     return true;
   }, [eventDates, settlementDatesSorted]);
 
-  const { dayFreeList, daySummaries, totals } = useMemo(() => {
-    if (!settlementDatesSorted.length || !filteredRecords.length) {
-      return {
-        dayFreeList: [] as DayFree[],
-        daySummaries: [] as DaySummary[],
-        totals: { all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0, amount: 0 },
-      };
-    }
-
-    const byDate = new Map<string, ParkingRecord[]>();
-    for (const r of filteredRecords) {
-      const list = byDate.get(r.date) ?? [];
-      list.push(r);
-      byDate.set(r.date, list);
-    }
-
-    const freeList: DayFree[] = [];
-    const summaries: DaySummary[] = [];
-    let totalAmount = 0;
-    let totalAllDay = 0;
-    let total2h = 0;
-    let total1h = 0;
-    let total30m = 0;
-
-    for (const date of settlementDatesSorted) {
-      const dayRecs = byDate.get(date) ?? [];
-      if (dayRecs.length === 0) continue;
-
-      const withAmount = dayRecs.map((r) => ({ ...r, amount: calcAmount(r) }));
-      const max = withAmount.reduce((a, b) => (a.amount >= b.amount ? a : b));
-      freeList.push(max);
-
-      let dayAllDay = 0;
-      let day2h = 0;
-      let day1h = 0;
-      let day30m = 0;
-      let dayAmount = 0;
-
-      for (const r of dayRecs) {
-        const isFree = r.id === max.id;
-        if (isFree) continue;
-
-        const amt = calcAmount(r);
-        dayAmount += amt;
-        dayAllDay += r.all_day_cnt;
-        day2h += r["2h_cnt"];
-        day1h += r["1h_cnt"];
-        day30m += r["30m_cnt"];
-        totalAmount += amt;
-        totalAllDay += r.all_day_cnt;
-        total2h += r["2h_cnt"];
-        total1h += r["1h_cnt"];
-        total30m += r["30m_cnt"];
-      }
-
-      summaries.push({ date, all_day_cnt: dayAllDay, "2h_cnt": day2h, "1h_cnt": day1h, "30m_cnt": day30m, amount: dayAmount });
-    }
-
-    return {
-      dayFreeList: freeList,
-      daySummaries: summaries,
-      totals: { all_day_cnt: totalAllDay, "2h_cnt": total2h, "1h_cnt": total1h, "30m_cnt": total30m, amount: totalAmount },
-    };
-  }, [settlementDatesSorted, filteredRecords]);
+  const { dayFreeList, daySummaries, totals } = useMemo(
+    () => computeSettlementTotals(settlementDatesSorted, filteredRecords, freeCarsPerDay),
+    [settlementDatesSorted, filteredRecords, freeCarsPerDay]
+  );
 
   const sortedRecords = useMemo(
     () =>
@@ -303,11 +233,13 @@ export default function ReportPageClient() {
     return sortedRecords.reduce(
       (acc, r) => {
         const isFree = freeRecordIdSet.has(r.id);
-        const amount = isFree ? 0 : calcAmount(r);
-        acc.all_day_cnt += r.all_day_cnt;
-        acc["2h_cnt"] += r["2h_cnt"];
-        acc["1h_cnt"] += r["1h_cnt"];
-        acc["30m_cnt"] += r["30m_cnt"];
+        const amount = isFree ? 0 : calcParkingRecordAmount(r);
+        if (!isFree) {
+          acc.all_day_cnt += r.all_day_cnt;
+          acc["2h_cnt"] += r["2h_cnt"];
+          acc["1h_cnt"] += r["1h_cnt"];
+          acc["30m_cnt"] += r["30m_cnt"];
+        }
         acc.amount += amount;
         return acc;
       },
@@ -345,6 +277,8 @@ export default function ReportPageClient() {
 
   const handlePdfDownload = async () => {
     if (!pdfExportRef.current || !project) return;
+    setSettlementEditorOpen(false);
+    setHideSettlementControlsForPdf(true);
     setPdfSaving(true);
     try {
       const { downloadParkingHistoryPdf } = await import("@/lib/parking-history-pdf");
@@ -354,6 +288,7 @@ export default function ReportPageClient() {
       alert("PDF 저장 중 오류가 발생했습니다.");
     } finally {
       setPdfSaving(false);
+      setHideSettlementControlsForPdf(false);
     }
   };
 
@@ -405,18 +340,37 @@ export default function ReportPageClient() {
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Parking Invoice</p>
               <h2 className="mt-2 text-3xl font-extrabold text-[var(--text)]">주차권 발급 정산서</h2>
             </div>
-            <div className="text-right">
-              <button
-                type="button"
-                onClick={() => setSettlementEditorOpen((prev) => !prev)}
-                className="btn btn-relief px-4 py-2 text-sm"
-              >
-                정산 기간 수정
-              </button>
-              <p className="mt-2 text-sm font-semibold text-[var(--text)]">
-                {isSettlementSameAsUsage ? "사용 일자와 동일" : settlementLabelCompact}
-              </p>
-            </div>
+            {!hideSettlementControlsForPdf && (
+              <div className="text-right">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <label className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm font-medium text-[var(--text)] shadow-sm">
+                    <span className="text-[var(--text-muted)]">1일 무료</span>
+                    <select
+                      value={freeCarsPerDay}
+                      onChange={(e) => setFreeCarsPerDay(Number(e.target.value))}
+                      className="min-w-[3rem] cursor-pointer rounded border-0 bg-transparent py-0 pl-0 pr-1 text-sm font-semibold text-[var(--text)] focus:outline-none focus:ring-0"
+                      aria-label="일자별 무료 처리 대수"
+                    >
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <option key={n} value={n}>
+                          {n}대
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setSettlementEditorOpen((prev) => !prev)}
+                    className="btn btn-relief px-4 py-2 text-sm"
+                  >
+                    정산 기간 수정
+                  </button>
+                </div>
+                <p className="mt-2 text-sm font-semibold text-[var(--text)]">
+                  {isSettlementSameAsUsage ? "사용 일자와 동일" : settlementLabelCompact}
+                </p>
+              </div>
+            )}
           </div>
           <div className="grid gap-6 sm:grid-cols-2">
             <div>
@@ -435,6 +389,24 @@ export default function ReportPageClient() {
             <span className="inline-flex items-center rounded-full bg-amber-50 px-4 py-1.5 text-base font-extrabold text-amber-700">
               총 {usageDaysCount}일 사용
             </span>
+          </div>
+          <div className="mt-6 flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[#F8FAFC] px-4 py-2.5 sm:flex-row sm:items-start sm:justify-between sm:gap-8 sm:px-5 sm:py-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                {freeCarsSummaryLabel(freeCarsPerDay)}
+              </p>
+              <p className="mt-3.5 text-base font-semibold leading-snug text-[var(--text)]">
+                {`종일권 ${totals.all_day_cnt}매, 2시간권 ${totals["2h_cnt"]}매, 1시간권 ${totals["1h_cnt"]}매, 30분권 ${totals["30m_cnt"]}매`}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-col sm:min-w-[200px] sm:text-right">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                총 정산 금액 (무료 건 제외)
+              </p>
+              <p className="mt-3.5 text-base font-semibold leading-snug text-[var(--text)]">
+                {totals.amount.toLocaleString()}원
+              </p>
+            </div>
           </div>
         </div>
 
@@ -557,7 +529,7 @@ export default function ReportPageClient() {
             </tbody>
           </table>
           <p className="px-8 pb-5 pt-2 text-sm font-semibold text-red-600">
-            ※ 위 수량 및 금액은 1일 1대 무료 건을 제외한 기준입니다.
+            ※ 위 수량 및 금액은 {freeCarsFootnoteLabel(freeCarsPerDay)} 건을 제외한 기준입니다.
           </p>
         </div>
 
@@ -586,7 +558,7 @@ export default function ReportPageClient() {
               <tbody>
                 {sortedRecords.map((r) => {
                   const isFree = freeRecordIdSet.has(r.id);
-                  const amount = isFree ? 0 : calcAmount(r);
+                  const amount = isFree ? 0 : calcParkingRecordAmount(r);
                   return (
                     <tr key={r.id} className={`table-row-hover ${isFree ? "bg-amber-100" : "bg-white"}`}>
                       <td className="border-t border-[var(--border)] px-4 py-2 text-[var(--text-muted)]">{monthDay(r.date)}</td>
@@ -612,7 +584,7 @@ export default function ReportPageClient() {
             </table>
           </div>
           <p className="mt-4 text-sm font-semibold text-red-600">
-            ※ 위 내역에서 노란색 부분은 1일 1대 무료 적용 차량입니다.
+            ※ 위 내역에서 노란색 부분은 {freeCarsFootnoteLabel(freeCarsPerDay)} 적용 차량입니다.
           </p>
         </div>
 
