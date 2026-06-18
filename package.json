@@ -10,7 +10,7 @@
     "dev:clean": "npm run clean && next dev",
     "dev:clean:turbo": "npm run clean && next dev --turbo",
     "dev:clean:webpack": "npm run clean && next dev",
-    "build": "next build",
+    "build": "npm run clean && next build",
     "start": "next start",
     "lint": "next lint"
   },
