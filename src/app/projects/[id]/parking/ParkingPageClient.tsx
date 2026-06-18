@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Calculator, Home, Plus, RefreshCw, Trash2, Wallet } from "lucide-react";
+import { ArrowLeft, Calculator, Home, Plus, Trash2 } from "lucide-react";
+import { MhpStoreCreditBadge } from "@/components/MhpStoreCreditBadge";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
@@ -14,23 +15,29 @@ import {
   parkingSupportShortLabel,
   parkingSupportUiClass,
 } from "@/lib/parking-support";
-import { formatMonthDaySlash, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
+import { formatMonthDaySlash } from "@/lib/schedule-dates";
+import { ManagerNameWithPhone } from "@/lib/manager-display";
+import {
+  computePresetupDateYmd,
+  findPresetupDateYmd,
+  getFirstEventStartYmdFromRooms,
+  isPresetupRoomName,
+  periodLabelMonthDayFromRooms,
+  PRESETUP_ROOM_NAME,
+  type ProjectRoomDate,
+} from "@/lib/presetup";
 import {
   isMhpApplyResponse,
   isMhpCancelAllResponse,
-  isMhpCreditResponse,
   isMhpLookupResponse,
   isMhpSyncResponse,
   postMhpApplyRequest,
   postMhpCancelAllRequest,
-  postMhpCreditRequest,
   postMhpLookupRequest,
   postMhpSyncRequest,
   splitMhpParkingDisplayText,
 } from "@/lib/mhp-extension";
-
-const MHP_CREDIT_POLL_MS = 40_000;
-const MHP_CREDIT_TIMEOUT_MS = 22_000;
+import { useMhpStoreCredit } from "@/lib/use-mhp-store-credit";
 
 function fallbackPeriodFromProject(p: Project): string {
   const s = String(p.start_date).slice(0, 10);
@@ -104,19 +111,17 @@ export default function ParkingPageClient() {
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedRoomName, setSelectedRoomName] = useState<string>("미지정");
   const [periodLabelLine, setPeriodLabelLine] = useState("");
+  const [projectRooms, setProjectRooms] = useState<ProjectRoomDate[]>([]);
   const [dateList, setDateList] = useState<string[]>([]);
+  const [presetupSaving, setPresetupSaving] = useState(false);
   const [rows, setRows] = useState<RowState[]>([]);
   const vehicleRefs = useRef<(HTMLInputElement | null)[]>([]);
   const ticketRefs = useRef<(HTMLInputElement | null)[][]>([]);
   const mhpPendingRef = useRef<{ requestId: string; index: number; vehicleNum: string } | null>(null);
   const mhpApplyPendingRef = useRef<{ requestId: string; index: number; kind: "sync" | "cancel_all" } | null>(null);
-  const mhpCreditPendingRef = useRef<string | null>(null);
-  const refreshMhpCreditRef = useRef<() => void>(() => {});
   const [mhpLoadingIndex, setMhpLoadingIndex] = useState<number | null>(null);
   const [mhpApplyLoadingIndex, setMhpApplyLoadingIndex] = useState<number | null>(null);
-  const [mhpCreditDisplay, setMhpCreditDisplay] = useState<string | null>(null);
-  const [mhpCreditError, setMhpCreditError] = useState<string | null>(null);
-  const [mhpCreditLoading, setMhpCreditLoading] = useState(false);
+  const mhpStoreCredit = useMhpStoreCredit();
 
   useEffect(() => {
     if (!dateList.length) {
@@ -130,50 +135,44 @@ export default function ParkingPageClient() {
     }
   }, [dateList, selectedDate]);
 
-  useEffect(() => {
-    if (!project) return;
-    if (!selectedDate) {
-      setSelectedRoomName("미지정");
-      return;
-    }
-    if (isDevMode()) {
-      const rooms = devStore.getRooms(projectId);
-      const r = rooms.find((x) => x.date === selectedDate);
-      setSelectedRoomName(r?.room_name ?? "미지정");
-      return;
-    }
-    (async () => {
-      const { data } = await supabase
-        .from("project_rooms")
-        .select("room_name")
-        .eq("project_id", projectId)
-        .eq("date", selectedDate)
-        .maybeSingle();
-      setSelectedRoomName((data as { room_name: string } | null)?.room_name ?? "미지정");
-    })();
-  }, [project, selectedDate, projectId, devStore]);
-
-  useEffect(() => {
-    if (!projectId || !project) return;
-    const proj = project;
-
-    function applyFromRoomRows(rows: { date: string; room_name: string }[]) {
-      const sortedDates = Array.from(new Set(rows.map((r) => String(r.date).slice(0, 10)))).sort();
-      // "사용한 날짜만" 보여주기 위해 dateList를 project_rooms에 있는 날짜로 구성합니다.
-      // (rooms가 비어있으면 기존 start_date~end_date fallback)
+  const applyFromRoomRows = useCallback(
+    (rows: { date: string; room_name: string }[]) => {
+      if (!project) return;
+      const normalized: ProjectRoomDate[] = rows.map((r) => ({
+        date: String(r.date).slice(0, 10),
+        room_name: r.room_name ?? "",
+      }));
+      setProjectRooms(normalized);
+      const sortedDates = Array.from(new Set(normalized.map((r) => r.date)))
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+        .sort();
       setDateList(
         sortedDates.length > 0
           ? sortedDates
-          : proj.start_date && proj.end_date
-            ? getDateRange(proj.start_date, proj.end_date)
+          : project.start_date && project.end_date
+            ? getDateRange(project.start_date, project.end_date)
             : []
       );
       const period =
         sortedDates.length > 0
-          ? periodLabelMonthDayFromSortedYmd(sortedDates)
-          : fallbackPeriodFromProject(proj);
+          ? periodLabelMonthDayFromRooms(normalized, sortedDates)
+          : fallbackPeriodFromProject(project);
       setPeriodLabelLine(period);
+    },
+    [project]
+  );
+
+  useEffect(() => {
+    if (!selectedDate) {
+      setSelectedRoomName("미지정");
+      return;
     }
+    const r = projectRooms.find((x) => x.date === selectedDate);
+    setSelectedRoomName(r?.room_name?.trim() || "미지정");
+  }, [selectedDate, projectRooms]);
+
+  useEffect(() => {
+    if (!projectId || !project) return;
 
     if (isDevMode()) {
       applyFromRoomRows(devStore.getRooms(projectId));
@@ -187,7 +186,54 @@ export default function ParkingPageClient() {
     return () => {
       cancelled = true;
     };
-  }, [projectId, project, devStore.data]);
+  }, [projectId, project, devStore.data, applyFromRoomRows]);
+
+  const handlePresetupRegistration = useCallback(async () => {
+    const existing = findPresetupDateYmd(projectRooms);
+    if (existing) {
+      setSelectedDate(existing);
+      return;
+    }
+    const firstStart = getFirstEventStartYmdFromRooms(projectRooms);
+    if (!firstStart) {
+      alert("행사 일자가 없어 사전세팅을 추가할 수 없습니다.");
+      return;
+    }
+    const presetupDate = computePresetupDateYmd(firstStart);
+    setPresetupSaving(true);
+    try {
+      if (isDevMode()) {
+        const current = devStore.getRooms(projectId).map((r) => ({
+          date: String(r.date).slice(0, 10),
+          room_name: r.room_name ?? "",
+        }));
+        devStore.saveRooms(projectId, [
+          ...current,
+          { date: presetupDate, room_name: PRESETUP_ROOM_NAME },
+        ]);
+        applyFromRoomRows(devStore.getRooms(projectId));
+      } else {
+        const { error } = await supabase.from("project_rooms").insert({
+          project_id: projectId,
+          date: presetupDate,
+          room_name: PRESETUP_ROOM_NAME,
+        });
+        if (error) throw error;
+        const { data } = await supabase
+          .from("project_rooms")
+          .select("date, room_name")
+          .eq("project_id", projectId)
+          .order("date");
+        applyFromRoomRows(data ?? []);
+      }
+      setSelectedDate(presetupDate);
+    } catch (e) {
+      console.error(e);
+      alert("사전세팅 일자를 추가하지 못했습니다.");
+    } finally {
+      setPresetupSaving(false);
+    }
+  }, [projectRooms, projectId, devStore, applyFromRoomRows]);
 
   useEffect(() => {
     if (isDevMode()) {
@@ -397,57 +443,14 @@ export default function ParkingPageClient() {
             )
           );
         }
-        refreshMhpCreditRef.current();
+        mhpStoreCredit.refresh();
       } else {
         alert(e.data.error?.trim() || (kind === "cancel_all" ? "취소에 실패했어요. MHP 콘솔을 확인해 주세요." : "동기화에 실패했어요. MHP 콘솔을 확인해 주세요."));
       }
     };
     window.addEventListener("message", onApplyMsg);
     return () => window.removeEventListener("message", onApplyMsg);
-  }, []);
-
-  const requestMhpCredit = useCallback(() => {
-    const requestId =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `mhp-credit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    mhpCreditPendingRef.current = requestId;
-    setMhpCreditLoading(true);
-    postMhpCreditRequest(requestId);
-    window.setTimeout(() => {
-      if (mhpCreditPendingRef.current !== requestId) return;
-      mhpCreditPendingRef.current = null;
-      setMhpCreditLoading(false);
-      setMhpCreditError("크레딧 응답이 없습니다. MHP 탭·확장을 확인하세요.");
-    }, MHP_CREDIT_TIMEOUT_MS);
-  }, []);
-
-  useEffect(() => {
-    refreshMhpCreditRef.current = requestMhpCredit;
-  }, [requestMhpCredit]);
-
-  useEffect(() => {
-    const onCredit = (e: MessageEvent) => {
-      if (e.source !== window || !isMhpCreditResponse(e.data)) return;
-      if (mhpCreditPendingRef.current !== e.data.requestId) return;
-      mhpCreditPendingRef.current = null;
-      setMhpCreditLoading(false);
-      if (e.data.ok && (e.data.creditText ?? "").trim()) {
-        setMhpCreditDisplay((e.data.creditText ?? "").trim());
-        setMhpCreditError(null);
-      } else {
-        setMhpCreditError(e.data.error?.trim() || "스토어 크레딧을 불러오지 못했습니다.");
-      }
-    };
-    window.addEventListener("message", onCredit);
-    return () => window.removeEventListener("message", onCredit);
-  }, []);
-
-  useEffect(() => {
-    requestMhpCredit();
-    const id = window.setInterval(requestMhpCredit, MHP_CREDIT_POLL_MS);
-    return () => window.clearInterval(id);
-  }, [requestMhpCredit]);
+  }, [mhpStoreCredit.refresh]);
 
   const requestMhpSync = useCallback(
     (index: number) => {
@@ -742,30 +745,12 @@ export default function ParkingPageClient() {
               </button>
               <h1 className="text-xl font-semibold text-[var(--text)]">주차권 등록</h1>
             </div>
-            <div className="flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-white px-3 py-2 shadow-sm sm:px-4 sm:py-2.5">
-              <Wallet className="h-5 w-5 shrink-0 text-[var(--text-muted)]" aria-hidden />
-              <div className="min-w-0 text-right">
-                <p className="text-sm font-semibold tracking-tight text-[var(--text-muted)] sm:text-base">
-                  MHP 스토어 크레딧
-                </p>
-                <p
-                  className="text-base font-bold tabular-nums text-[var(--text)] sm:text-lg"
-                  title={mhpCreditError && !mhpCreditDisplay ? mhpCreditError : undefined}
-                >
-                  {mhpCreditLoading && !mhpCreditDisplay ? "…" : (mhpCreditDisplay ?? "—")}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => requestMhpCredit()}
-                disabled={mhpCreditLoading}
-                className="inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg)] hover:text-[var(--text)] disabled:cursor-wait disabled:opacity-50"
-                title="크레딧 다시 읽기 (MHP 탭 열림 필요)"
-                aria-label="스토어 크레딧 새로고침"
-              >
-                <RefreshCw className={`h-4 w-4 ${mhpCreditLoading ? "animate-spin" : ""}`} />
-              </button>
-            </div>
+            <MhpStoreCreditBadge
+              display={mhpStoreCredit.display}
+              error={mhpStoreCredit.error}
+              loading={mhpStoreCredit.loading}
+              onRefresh={mhpStoreCredit.refresh}
+            />
           </div>
         </div>
       </header>
@@ -776,7 +761,14 @@ export default function ParkingPageClient() {
             <div className="min-w-[260px] space-y-3 rounded-2xl border border-[#DCE8FF] bg-[#EFF4FF] px-6 py-5">
               <p className="text-lg font-semibold text-[var(--text)]">
                 {project.org_name}{" "}
-                <span className="text-base font-normal text-[var(--text-muted)]">/ {project.manager}</span>
+                <span className="text-base">
+                  <ManagerNameWithPhone
+                    manager={project.manager}
+                    managerPhone={project.manager_phone}
+                    prefix="/ "
+                    phoneClassName="font-normal text-[var(--text-muted)]"
+                  />
+                </span>
               </p>
               <p className="text-base font-semibold text-[var(--text)]">
                 공간 : <span className="font-semibold text-[var(--text)]">{selectedRoomName}</span>
@@ -870,24 +862,42 @@ export default function ParkingPageClient() {
               </div>
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-4">
-            <label className="text-sm font-medium text-[var(--text)]">일자</label>
-            <select
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="input min-w-[148px] px-3 py-2.5 text-sm text-[var(--text)]"
-            >
-              {dateList.map((d) => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
-            <Link
-              href={`/projects/${projectId}/settlement`}
-              className="btn btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm"
-            >
-              <Calculator className="h-4 w-4" />
-              정산 보기
-            </Link>
+          <div className="flex shrink-0 flex-col items-end gap-3">
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="text-sm font-medium text-[var(--text)]">일자</label>
+              <select
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="input min-w-[148px] px-3 py-2.5 text-sm text-[var(--text)]"
+              >
+                {dateList.map((d) => {
+                  const room = projectRooms.find((r) => r.date === d);
+                  const label = isPresetupRoomName(room?.room_name) ? `${d} (사전세팅)` : d;
+                  return (
+                    <option key={d} value={d}>
+                      {label}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+            <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:min-w-[148px]">
+              <Link
+                href={`/projects/${projectId}/settlement`}
+                className="btn btn-primary inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm"
+              >
+                <Calculator className="h-4 w-4" />
+                정산 보기
+              </Link>
+              <button
+                type="button"
+                disabled={presetupSaving}
+                onClick={() => void handlePresetupRegistration()}
+                className="btn inline-flex items-center justify-center px-4 py-2.5 text-sm disabled:cursor-wait disabled:opacity-60"
+              >
+                {presetupSaving ? "추가 중…" : "사전세팅 차량 등록"}
+              </button>
+            </div>
           </div>
         </div>
 

@@ -11,6 +11,7 @@ import {
   parkingSupportBadgeVariant,
   parkingSupportShortLabel,
 } from "@/lib/parking-support";
+import { ManagerNameWithPhone } from "@/lib/manager-display";
 import { Badge } from "@/components/ui/Badge";
 
 const TICKET_KEYS = ["all_day_cnt", "2h_cnt", "1h_cnt", "30m_cnt"] as const;
@@ -195,7 +196,14 @@ export function ParkingSection({ projectId, date, project }: Props) {
         <div className="space-y-2 rounded-lg bg-[#F9FAFF] px-4 py-3">
           <p className="text-base font-semibold text-[var(--text)]">
             {project.org_name}{" "}
-            <span className="text-sm font-normal text-[var(--text-muted)]">/ {project.manager}</span>
+            <span className="text-sm">
+              <ManagerNameWithPhone
+                manager={project.manager}
+                managerPhone={project.manager_phone}
+                prefix="/ "
+                phoneClassName="font-normal text-[var(--text-muted)]"
+              />
+            </span>
           </p>
           <div className="flex flex-wrap gap-6 text-sm items-center">
             <Badge

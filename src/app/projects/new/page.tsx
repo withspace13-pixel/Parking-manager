@@ -8,7 +8,8 @@ import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
 import type { ParkingSupport } from "@/lib/supabase";
-import { datesYmdToFormRanges, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
+import { datesYmdToFormRanges, isWorkingDayYmd, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
+import { sanitizeManagerPhoneDigits } from "@/lib/manager-display";
 import { OrgNameField } from "@/components/OrgNameField";
 import favoriteOrgNamesJson from "@/data/favorite-org-names.json";
 import { buildOrgNameList } from "@/lib/org-name-suggestions";
@@ -59,6 +60,7 @@ export default function NewProjectPage() {
   type ScheduleRange = { start: string; end: string };
   const [org_name, setOrgName] = useState("");
   const [manager, setManager] = useState("");
+  const [managerPhone, setManagerPhone] = useState("");
   const [event_name, setEventName] = useState("");
   const [ranges, setRanges] = useState<ScheduleRange[]>(() => {
     const t = todayString();
@@ -91,11 +93,7 @@ export default function NewProjectPage() {
     return Array.from(set).sort();
   })();
 
-  const weekdayDateList = allDateList.filter((ymd) => {
-    const [y, m, d] = ymd.split("-").map(Number);
-    const day = new Date(y, m - 1, d).getDay();
-    return day !== 0 && day !== 6;
-  });
+  const weekdayDateList = allDateList.filter(isWorkingDayYmd);
 
   const dateList = includeWeekends ? allDateList : weekdayDateList;
 
@@ -184,7 +182,7 @@ export default function NewProjectPage() {
     const mgr = String(manager ?? "").trim();
     const eventName = String(event_name ?? "").trim();
     if (!name || !mgr) {
-      setError("기관명과 담당자명을 입력해 주세요.");
+      setError("기관명과 담당자 정보(이름)를 입력해 주세요.");
       return;
     }
     if (normalizedRanges.length === 0) {
@@ -210,6 +208,7 @@ export default function NewProjectPage() {
           {
             org_name: name,
             manager: mgr,
+            manager_phone: sanitizeManagerPhoneDigits(managerPhone) || null,
             event_name: eventName || null,
             start_date: sDate,
             end_date: eDate,
@@ -228,6 +227,7 @@ export default function NewProjectPage() {
         .insert({
           org_name: name,
           manager: mgr,
+          manager_phone: sanitizeManagerPhoneDigits(managerPhone) || null,
           event_name: eventName || null,
           start_date: sDate,
           end_date: eDate,
@@ -324,7 +324,7 @@ export default function NewProjectPage() {
                 </p>
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text)]">담당자명</label>
+                <label className="mb-2 block text-sm font-medium text-[var(--text)]">담당자 정보</label>
                 <input
                   type="text"
                   value={manager}
@@ -332,6 +332,16 @@ export default function NewProjectPage() {
                   className="input w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
                   placeholder="예: 홍길동"
                 />
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  value={managerPhone}
+                  onChange={(e) => setManagerPhone(sanitizeManagerPhoneDigits(e.target.value))}
+                  className="input mt-2 w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
+                  placeholder="예: 01012345678"
+                  autoComplete="tel"
+                />
+                <p className="mt-1.5 text-xs text-[var(--text-muted)]">숫자만 입력해 주세요. (하이픈 없이)</p>
               </div>
               <div className="sm:col-span-2">
                 <label className="mb-2 block text-sm font-medium text-[var(--text)]">행사명</label>

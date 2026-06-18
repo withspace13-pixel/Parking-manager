@@ -50,9 +50,11 @@ export function freeCarsFootnoteLabel(freeCarsPerDay: number) {
 export function computeSettlementTotals(
   settlementDatesSorted: string[],
   records: ParkingRecord[],
-  freeCarsPerDay: number
+  freeCarsPerDay: number,
+  options?: { presetupDates?: Set<string> }
 ): { dayFreeList: DayFree[]; daySummaries: DaySummary[]; totals: SettlementTotals } {
-  const freeN = Math.max(1, Math.min(5, Math.floor(freeCarsPerDay) || 1));
+  const globalFreeN = Math.max(1, Math.min(5, Math.floor(freeCarsPerDay) || 1));
+  const presetupDates = options?.presetupDates ?? new Set<string>();
 
   if (!settlementDatesSorted.length || !records.length) {
     return {
@@ -80,6 +82,8 @@ export function computeSettlementTotals(
   for (const date of settlementDatesSorted) {
     const dayRecs = byDate.get(date) ?? [];
     if (dayRecs.length === 0) continue;
+
+    const freeN = presetupDates.has(date) ? 1 : globalFreeN;
 
     const withAmount = dayRecs
       .map((r) => ({ ...r, amount: calcParkingRecordAmount(r) }))

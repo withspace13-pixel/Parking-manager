@@ -10,6 +10,7 @@ import {
 import type { ParkingRecord, Project, ProjectRoom } from "./supabase";
 import { DEV_STORAGE_KEY } from "./dev-mode";
 import { parseParkingSupport } from "./parking-support";
+import { clampFreeCarsPerDay } from "./free-cars-per-day";
 
 type DevData = {
   projects: Project[];
@@ -27,6 +28,7 @@ function loadFromStorage(): DevData {
     const projects = (parsed.projects ?? []).map((p) => ({
       ...p,
       parking_support: parseParkingSupport((p as Project).parking_support as unknown),
+      free_cars_per_day: clampFreeCarsPerDay((p as Project).free_cars_per_day),
     }));
     return {
       projects,
@@ -111,6 +113,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
         ...input,
         id: uuid(),
         parking_support: parseParkingSupport(input.parking_support as unknown),
+        free_cars_per_day: clampFreeCarsPerDay(input.free_cars_per_day ?? 1),
       };
       const rooms: ProjectRoom[] = (roomList ?? []).map((r) => ({
         id: uuid(),

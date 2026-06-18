@@ -9,7 +9,8 @@ import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
 import type { ParkingSupport, Project } from "@/lib/supabase";
 import { parseParkingSupport } from "@/lib/parking-support";
-import { datesYmdToFormRanges, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
+import { datesYmdToFormRanges, isWorkingDayYmd, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
+import { sanitizeManagerPhoneDigits } from "@/lib/manager-display";
 
 /** YYYY-MM-DD 형식인지 확인 */
 function isDateStr(s: string): boolean {
@@ -62,6 +63,7 @@ export default function EditProjectForm() {
   const [project, setProject] = useState<Project | null>(null);
   const [org_name, setOrgName] = useState("");
   const [manager, setManager] = useState("");
+  const [managerPhone, setManagerPhone] = useState("");
   const [event_name, setEventName] = useState("");
   const [ranges, setRanges] = useState<ScheduleRange[]>([{ start: "", end: "" }]);
   const [includeWeekends, setIncludeWeekends] = useState(false);
@@ -86,6 +88,7 @@ export default function EditProjectForm() {
       setProject(p);
       setOrgName(p.org_name);
       setManager(p.manager);
+      setManagerPhone(sanitizeManagerPhoneDigits(p.manager_phone ?? ""));
       setEventName(p.event_name ?? "");
       // 저장된 날짜별 룸(project_rooms)이 있으면 그 날짜들로 일정 구간 복원 (중간 날 제거·띄엄일정 반영)
       const roomDates = Object.keys(roomMap)
@@ -161,11 +164,7 @@ export default function EditProjectForm() {
     return Array.from(set).sort();
   })();
 
-  const weekdayDateList = allDateList.filter((ymd) => {
-    const [y, m, d] = ymd.split("-").map(Number);
-    const day = new Date(y, m - 1, d).getDay();
-    return day !== 0 && day !== 6;
-  });
+  const weekdayDateList = allDateList.filter(isWorkingDayYmd);
 
   const dateList = includeWeekends ? allDateList : weekdayDateList;
 
@@ -257,7 +256,7 @@ export default function EditProjectForm() {
     const mgr = String(manager ?? "").trim();
     const eventName = String(event_name ?? "").trim();
     if (!name || !mgr) {
-      setError("기관명과 담당자명을 입력해 주세요.");
+      setError("기관명과 담당자 정보(이름)를 입력해 주세요.");
       return;
     }
     if (normalizedRanges.length === 0) {
@@ -282,6 +281,7 @@ export default function EditProjectForm() {
         devStore.updateProject(projectId, {
           org_name: name,
           manager: mgr,
+          manager_phone: sanitizeManagerPhoneDigits(managerPhone) || null,
           event_name: eventName || null,
           start_date: sDate,
           end_date: eDate,
@@ -299,6 +299,7 @@ export default function EditProjectForm() {
         .update({
           org_name: name,
           manager: mgr,
+          manager_phone: sanitizeManagerPhoneDigits(managerPhone) || null,
           event_name: eventName || null,
           start_date: sDate,
           end_date: eDate,
@@ -410,7 +411,7 @@ export default function EditProjectForm() {
                 />
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text)]">담당자명</label>
+                <label className="mb-2 block text-sm font-medium text-[var(--text)]">담당자 정보</label>
                 <input
                   type="text"
                   value={manager}
@@ -418,6 +419,16 @@ export default function EditProjectForm() {
                   className="input w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
                   placeholder="예: 홍길동"
                 />
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  value={managerPhone}
+                  onChange={(e) => setManagerPhone(sanitizeManagerPhoneDigits(e.target.value))}
+                  className="input mt-2 w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
+                  placeholder="예: 01012345678"
+                  autoComplete="tel"
+                />
+                <p className="mt-1.5 text-xs text-[var(--text-muted)]">숫자만 입력해 주세요. (하이픈 없이)</p>
               </div>
               <div className="sm:col-span-2">
                 <label className="mb-2 block text-sm font-medium text-[var(--text)]">행사명</label>

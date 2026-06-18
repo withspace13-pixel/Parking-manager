@@ -23,14 +23,18 @@ import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
 import type { Project } from "@/lib/supabase";
 import {
-  periodLabelIsoFromSortedYmd,
-  periodLabelMonthDayFromSortedYmd,
-  periodLabelShortYmdFromSortedYmd,
-} from "@/lib/schedule-dates";
+  periodLabelIsoFromRooms,
+  periodLabelMonthDayFromRooms,
+  periodLabelShortYmdFromRooms,
+  type ProjectRoomDate,
+} from "@/lib/presetup";
+import { ManagerNameWithPhone } from "@/lib/manager-display";
 import { compareMainEventListByRoom } from "@/lib/main-event-room-sort";
 import { isArchivedProjectExpiredForPurge } from "@/lib/archive-retention";
 import { ParkingSection } from "@/components/ParkingSection";
+import { MhpStoreCreditBadge } from "@/components/MhpStoreCreditBadge";
 import { Badge } from "@/components/ui/Badge";
+import { useMhpStoreCredit } from "@/lib/use-mhp-store-credit";
 import {
   cycleParkingSupport,
   parseParkingSupport,
@@ -95,6 +99,7 @@ export default function HomePage() {
   const [actionMenuProjectId, setActionMenuProjectId] = useState<string | null>(null);
   const devStore = useDevStore();
   const projectPickerRef = useRef<HTMLDivElement | null>(null);
+  const mhpStoreCredit = useMhpStoreCredit();
   /** roomByProjectId가 현재 selectedDate 기준으로 갱신되었을 때만 선택 해제(useEffect)를 적용 — 날짜 전환 직후 레이스 방지 */
   const lastRoomFetchForDateRef = useRef<string | null>(null);
   const roomByProjectIdCacheRef = useRef<Map<string, Record<string, string>>>(new Map());
@@ -239,14 +244,19 @@ export default function HomePage() {
       const next: Record<string, { list: string; detail: string; full: string }> = {};
       const primary: Record<string, string> = {};
       allProjects.forEach((p) => {
-        const rooms = devStore.getRooms(p.id);
-        const dates = Array.from(new Set(rooms.map((r) => String(r.date).slice(0, 10)))).sort();
+        const rooms: ProjectRoomDate[] = (devStore.getRooms(p.id) ?? []).map((r) => ({
+          date: String(r.date).slice(0, 10),
+          room_name: r.room_name ?? "",
+        }));
+        const dates = Array.from(new Set(rooms.map((r) => r.date)))
+          .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+          .sort();
         primary[p.id] = dates.length > 0 ? dates[0]! : String(p.end_date).slice(0, 10);
         if (dates.length > 0) {
           next[p.id] = {
-            list: periodLabelMonthDayFromSortedYmd(dates),
-            detail: periodLabelShortYmdFromSortedYmd(dates),
-            full: periodLabelIsoFromSortedYmd(dates),
+            list: periodLabelMonthDayFromRooms(rooms, dates),
+            detail: periodLabelShortYmdFromRooms(rooms, dates),
+            full: periodLabelIsoFromRooms(rooms, dates),
           };
         } else {
           next[p.id] = fallback(p);
@@ -259,27 +269,32 @@ export default function HomePage() {
     const ids = allProjects.map((p) => p.id);
     void supabase
       .from("project_rooms")
-      .select("project_id, date")
+      .select("project_id, date, room_name")
       .in("project_id", ids)
       .then(({ data, error }) => {
         if (error) return;
-        const byProject: Record<string, Set<string>> = {};
-        (data || []).forEach((row: { project_id: string; date: string }) => {
+        const roomsByProject: Record<string, ProjectRoomDate[]> = {};
+        (data || []).forEach((row: { project_id: string; date: string; room_name: string }) => {
           const pid = row.project_id;
-          const d = String(row.date).slice(0, 10);
-          if (!byProject[pid]) byProject[pid] = new Set();
-          byProject[pid].add(d);
+          if (!roomsByProject[pid]) roomsByProject[pid] = [];
+          roomsByProject[pid].push({
+            date: String(row.date).slice(0, 10),
+            room_name: row.room_name ?? "",
+          });
         });
         const next: Record<string, { list: string; detail: string; full: string }> = {};
         const primary: Record<string, string> = {};
         allProjects.forEach((p) => {
-          const dates = byProject[p.id] ? Array.from(byProject[p.id]).sort() : [];
+          const rooms = roomsByProject[p.id] ?? [];
+          const dates = Array.from(new Set(rooms.map((r) => r.date)))
+            .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+            .sort();
           primary[p.id] = dates.length > 0 ? dates[0]! : String(p.end_date).slice(0, 10);
           if (dates.length > 0) {
             next[p.id] = {
-              list: periodLabelMonthDayFromSortedYmd(dates),
-              detail: periodLabelShortYmdFromSortedYmd(dates),
-              full: periodLabelIsoFromSortedYmd(dates),
+              list: periodLabelMonthDayFromRooms(rooms, dates),
+              detail: periodLabelShortYmdFromRooms(rooms, dates),
+              full: periodLabelIsoFromRooms(rooms, dates),
             };
           } else {
             next[p.id] = fallback(p);
@@ -444,7 +459,7 @@ export default function HomePage() {
     <div className="min-h-screen bg-[var(--bg)]">
       <header className="border-b border-[var(--border)] bg-white">
         <div className="mx-auto max-w-7xl px-8 py-5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <button
                 type="button"
@@ -466,6 +481,12 @@ export default function HomePage() {
                 <Badge variant="secondary">개발자 모드</Badge>
               )}
             </div>
+            <MhpStoreCreditBadge
+              display={mhpStoreCredit.display}
+              error={mhpStoreCredit.error}
+              loading={mhpStoreCredit.loading}
+              onRefresh={mhpStoreCredit.refresh}
+            />
           </div>
         </div>
       </header>
@@ -714,7 +735,14 @@ export default function HomePage() {
                         <div className="min-w-0 flex-1">
                           <p className="font-semibold text-[var(--text)]">
                             {p.org_name}
-                            <span className="text-sm font-normal text-[var(--text-muted)]"> / {p.manager}</span>
+                            <span className="text-sm">
+                              <ManagerNameWithPhone
+                                manager={p.manager}
+                                managerPhone={p.manager_phone}
+                                prefix=" / "
+                                phoneClassName="font-normal text-[var(--text-muted)]"
+                              />
+                            </span>
                           </p>
                           <p className="text-sm font-semibold text-indigo-600">{p.event_name || "행사명 미입력"}</p>
                           <p className="mt-1 text-sm font-medium text-[var(--text)]">공간 : {p.roomName}</p>
@@ -902,7 +930,9 @@ export default function HomePage() {
                       <span className="block truncate">{p.org_name}</span>
                     </td>
                     <td className="px-3 py-4 text-[var(--text-muted)] sm:px-6">
-                      <span className="block truncate">{p.manager}</span>
+                      <span className="block truncate">
+                        <ManagerNameWithPhone manager={p.manager} managerPhone={p.manager_phone} />
+                      </span>
                     </td>
                     <td className="px-3 py-4 text-[var(--text-muted)] sm:px-6">
                       <span className="block truncate">

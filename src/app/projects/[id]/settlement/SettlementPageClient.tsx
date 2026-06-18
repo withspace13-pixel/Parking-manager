@@ -7,13 +7,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Calculator, Download, Home } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
-import { datesYmdToConsecutiveRanges, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
+import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
 import {
   calcParkingRecordAmount,
   computeSettlementTotals,
   freeCarsFootnoteLabel,
   freeCarsSummaryLabel,
 } from "@/lib/settlement-calc";
+import { useProjectFreeCarsPerDay } from "@/lib/use-project-free-cars-per-day";
+import {
+  buildUsageDaysBadgeText,
+  getActivePresetupDateSet,
+  getUsageDatesSorted,
+  periodLabelMonthDayFromRooms,
+  type ProjectRoomDate,
+} from "@/lib/presetup";
 import { supabase } from "@/lib/supabase";
 import type { Project, ParkingRecord } from "@/lib/supabase";
 
@@ -88,6 +96,7 @@ export default function SettlementPageClient() {
   const [project, setProject] = useState<Project | null>(null);
   const [records, setRecords] = useState<ParkingRecord[]>([]);
   const [eventDates, setEventDates] = useState<string[]>([]);
+  const [eventRooms, setEventRooms] = useState<ProjectRoomDate[]>([]);
   const pdfExportRef = useRef<HTMLDivElement>(null);
   const [pdfSaving, setPdfSaving] = useState(false);
   const [hideSettlementControlsForPdf, setHideSettlementControlsForPdf] = useState(false);
@@ -96,25 +105,29 @@ export default function SettlementPageClient() {
   const [settlementRanges, setSettlementRanges] = useState<Array<{ start: string; end: string }>>([]);
   /** 정산 일자 집계 시 주말 포함(기본: 제외) */
   const [includeWeekendsInSettlement, setIncludeWeekendsInSettlement] = useState(false);
-  /** 일자별 무료 처리 대수(당일 발급액 상위 N대, 기본 1) */
-  const [freeCarsPerDay, setFreeCarsPerDay] = useState(1);
+  const { freeCarsPerDay, setFreeCarsPerDay } = useProjectFreeCarsPerDay(projectId, project);
 
-  const projectMin = eventDates.length > 0 ? eventDates[0] : project ? String(project.start_date).slice(0, 10) : "";
+  const usageDates = useMemo(
+    () => getUsageDatesSorted(eventRooms, records, eventDates),
+    [eventRooms, records, eventDates]
+  );
+
+  const projectMin = usageDates.length > 0 ? usageDates[0] : project ? String(project.start_date).slice(0, 10) : "";
   const projectMax =
-    eventDates.length > 0 ? eventDates[eventDates.length - 1] : project ? String(project.end_date).slice(0, 10) : "";
-  const eventDateSet = useMemo(() => new Set(eventDates), [eventDates]);
+    usageDates.length > 0 ? usageDates[usageDates.length - 1] : project ? String(project.end_date).slice(0, 10) : "";
+  const usageDateSet = useMemo(() => new Set(usageDates), [usageDates]);
 
   useEffect(() => {
     if (!project) return;
-    if (eventDates.length > 0) {
-      const split = datesYmdToConsecutiveRanges(eventDates);
+    if (usageDates.length > 0) {
+      const split = datesYmdToConsecutiveRanges(usageDates);
       setSettlementRanges(split.length > 0 ? split : [{ start: projectMin, end: projectMax }]);
       return;
     }
     if (projectMin && projectMax) {
       setSettlementRanges([{ start: projectMin, end: projectMax }]);
     }
-  }, [project?.id, projectMin, projectMax, eventDates]);
+  }, [project?.id, projectMin, projectMax, usageDates]);
 
   const settlementDatesSorted = useMemo(() => {
     if (!project || !projectMin || !projectMax) return [];
@@ -124,17 +137,17 @@ export default function SettlementPageClient() {
     } else {
       raw = unionDatesFromRanges(settlementRanges, projectMin, projectMax);
     }
-    if (eventDates.length > 0) {
-      raw = raw.filter((d) => eventDateSet.has(d));
+    if (usageDates.length > 0) {
+      raw = raw.filter((d) => usageDateSet.has(d));
     }
     if (includeWeekendsInSettlement) return raw;
     return raw.filter((ymd) => {
-      if (eventDateSet.has(ymd)) return true;
+      if (usageDateSet.has(ymd)) return true;
       const [y, m, d] = ymd.split("-").map(Number);
       const day = new Date(y, m - 1, d).getDay();
       return day !== 0 && day !== 6;
     });
-  }, [project, projectMin, projectMax, settlementRanges, includeWeekendsInSettlement, eventDates, eventDateSet]);
+  }, [project, projectMin, projectMax, settlementRanges, includeWeekendsInSettlement, usageDates, usageDateSet]);
 
   const settlementDateSet = useMemo(() => new Set(settlementDatesSorted), [settlementDatesSorted]);
 
@@ -147,7 +160,14 @@ export default function SettlementPageClient() {
     if (isDevMode()) {
       const p = devStore.getProject(projectId);
       if (p) setProject(p);
-      const roomDates = (devStore.getRooms(projectId) ?? [])
+      const rooms = devStore.getRooms(projectId) ?? [];
+      setEventRooms(
+        rooms.map((r) => ({
+          date: String(r.date).slice(0, 10),
+          room_name: r.room_name ?? "",
+        }))
+      );
+      const roomDates = rooms
         .map((r) => String(r.date).slice(0, 10))
         .filter(isYmd)
         .sort();
@@ -160,11 +180,18 @@ export default function SettlementPageClient() {
       if (p) setProject(p as Project);
       const { data: rooms } = await supabase
         .from("project_rooms")
-        .select("date")
+        .select("date, room_name")
         .eq("project_id", projectId)
         .order("date");
-      const roomDates = (rooms || [])
-        .map((r: { date: string }) => String(r.date).slice(0, 10))
+      const roomRows = (rooms || []) as ProjectRoomDate[];
+      setEventRooms(
+        roomRows.map((r) => ({
+          date: String(r.date).slice(0, 10),
+          room_name: r.room_name ?? "",
+        }))
+      );
+      const roomDates = roomRows
+        .map((r) => String(r.date).slice(0, 10))
         .filter(isYmd)
         .sort();
       setEventDates(Array.from(new Set(roomDates)));
@@ -178,14 +205,14 @@ export default function SettlementPageClient() {
     })();
   }, [projectId, devStore.data]);
   const eventPeriodLabel = useMemo(() => {
-    if (eventDates.length === 0) {
+    if (usageDates.length === 0) {
       if (!project) return "";
       return project.start_date === project.end_date
         ? shortDate(project.start_date)
         : `${shortDate(project.start_date)} ~ ${shortDate(project.end_date)}`;
     }
-    return periodLabelMonthDayFromSortedYmd(eventDates);
-  }, [eventDates, project]);
+    return periodLabelMonthDayFromRooms(eventRooms, usageDates);
+  }, [usageDates, eventRooms, project]);
 
   const settlementLabelCompact = useMemo(() => {
     if (!settlementDatesSorted.length) return "선택된 정산 일자가 없습니다.";
@@ -195,18 +222,26 @@ export default function SettlementPageClient() {
   }, [settlementDatesSorted]);
 
   const isSettlementSameAsUsage = useMemo(() => {
-    const usage = eventDates;
+    const usage = usageDates;
     if (usage.length !== settlementDatesSorted.length) return false;
     for (let i = 0; i < usage.length; i++) {
       if (usage[i] !== settlementDatesSorted[i]) return false;
     }
     return true;
-  }, [eventDates, settlementDatesSorted]);
+  }, [usageDates, settlementDatesSorted]);
 
+
+  const presetupDateSet = useMemo(
+    () => getActivePresetupDateSet(eventRooms, records),
+    [eventRooms, records]
+  );
 
   const { dayFreeList, daySummaries, totals } = useMemo(
-    () => computeSettlementTotals(settlementDatesSorted, filteredRecords, freeCarsPerDay),
-    [settlementDatesSorted, filteredRecords, freeCarsPerDay]
+    () =>
+      computeSettlementTotals(settlementDatesSorted, filteredRecords, freeCarsPerDay, {
+        presetupDates: presetupDateSet,
+      }),
+    [settlementDatesSorted, filteredRecords, freeCarsPerDay, presetupDateSet]
   );
 
   const sortedRecords = useMemo(
@@ -249,11 +284,20 @@ export default function SettlementPageClient() {
       .join(", ");
   }, [settlementDatesSorted]);
 
-  const usageDaysCount = useMemo(() => {
-    if (eventDates.length > 0) return eventDates.length;
-    if (!project?.start_date || !project?.end_date) return 0;
-    return getDateRange(project.start_date, project.end_date).length;
-  }, [eventDates, project?.start_date, project?.end_date]);
+  const usageDaysBadgeText = useMemo(() => {
+    const fallback =
+      usageDates.length > 0
+        ? 0
+        : project?.start_date && project?.end_date
+          ? getDateRange(project.start_date, project.end_date).length
+          : 0;
+    return buildUsageDaysBadgeText(
+      eventRooms,
+      records,
+      eventDates,
+      fallback > 0 ? fallback : undefined
+    );
+  }, [eventRooms, records, eventDates, usageDates.length, project?.start_date, project?.end_date]);
 
   const updateSettlementRange = (idx: number, key: "start" | "end", value: string) => {
     const v = value.slice(0, 10);
@@ -355,7 +399,7 @@ export default function SettlementPageClient() {
                     <span className="text-[var(--text-muted)]">1일 무료</span>
                     <select
                       value={freeCarsPerDay}
-                      onChange={(e) => setFreeCarsPerDay(Number(e.target.value))}
+                      onChange={(e) => void setFreeCarsPerDay(Number(e.target.value))}
                       className="min-w-[3rem] cursor-pointer rounded border-0 bg-transparent py-0 pl-0 pr-1 text-sm font-semibold text-[var(--text)] focus:outline-none focus:ring-0"
                       aria-label="일자별 무료 처리 대수"
                     >
@@ -395,7 +439,7 @@ export default function SettlementPageClient() {
               사용 일자: {eventPeriodLabel}
             </p>
             <span className="inline-flex items-center rounded-full bg-amber-50 px-4 py-1.5 text-base font-extrabold text-amber-700">
-              총 {usageDaysCount}일 사용
+              총 {usageDaysBadgeText}
             </span>
           </div>
           <div className="mt-6 flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[#F8FAFC] px-4 py-2.5 sm:flex-row sm:items-start sm:justify-between sm:gap-8 sm:px-5 sm:py-3">
@@ -518,7 +562,12 @@ export default function SettlementPageClient() {
             <tbody>
               {daySummaries.map((row) => (
                 <tr key={row.date} className="table-row-hover">
-                  <td className="px-6 text-[var(--text-muted)]">{monthDay(row.date)}</td>
+                  <td className="px-6 text-[var(--text-muted)]">
+                    {monthDay(row.date)}
+                    {presetupDateSet.has(row.date) ? (
+                      <span className="ml-1 text-xs font-medium text-amber-700">(사전세팅)</span>
+                    ) : null}
+                  </td>
                   <td className="px-6 text-center text-[var(--text-muted)]">{row.all_day_cnt}매</td>
                   <td className="px-6 text-center text-[var(--text-muted)]">{row["2h_cnt"]}매</td>
                   <td className="px-6 text-center text-[var(--text-muted)]">{row["1h_cnt"]}매</td>

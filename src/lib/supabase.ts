@@ -17,10 +17,13 @@ export type Project = {
   id: string;
   org_name: string;
   manager: string;
+  manager_phone?: string | null;
   event_name?: string | null;
   start_date: string;
   end_date: string;
   parking_support: ParkingSupport;
+  /** 정산 시 일자별 무료 처리 대수(1~5, 기본 1) */
+  free_cars_per_day?: number;
   remarks: string | null;
   created_at?: string;
   updated_at?: string;
