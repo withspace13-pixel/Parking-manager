@@ -8,6 +8,7 @@ import {
   shortYmdSlice,
 } from "@/lib/schedule-dates";
 
+export const PRESETUP_DAILY_FREE_CAP_WON = 18_000;
 export const PRESETUP_ROOM_NAME = "사전세팅";
 
 export function isPresetupRoomName(name: string | null | undefined): boolean {

@@ -1,8 +1,9 @@
 // 정산: 일자별 무료 차량(당일 발급액 상위 N대) 제외 집계
+import { PRESETUP_DAILY_FREE_CAP_WON } from "@/lib/presetup";
 import { TICKET_PRICES } from "@/lib/supabase";
 import type { ParkingRecord } from "@/lib/supabase";
 
-export type DayFree = ParkingRecord & { amount: number };
+export type DayFree = ParkingRecord & { amount: number; discount: number };
 export type DaySummary = {
   date: string;
   all_day_cnt: number;
@@ -31,6 +32,28 @@ export function calcParkingRecordAmount(
   );
 }
 
+export function settlementRecordDiscount(
+  recordId: string,
+  recordDiscounts: Record<string, number>
+): number {
+  return recordDiscounts[recordId] ?? 0;
+}
+
+export function settlementRecordCharge(
+  r: ParkingRecord,
+  recordDiscounts: Record<string, number>
+): number {
+  return Math.max(0, calcParkingRecordAmount(r) - settlementRecordDiscount(r.id, recordDiscounts));
+}
+
+export function isRecordFullyDiscounted(
+  r: ParkingRecord,
+  recordDiscounts: Record<string, number>
+): boolean {
+  const full = calcParkingRecordAmount(r);
+  return full > 0 && settlementRecordDiscount(r.id, recordDiscounts) >= full;
+}
+
 /** 발급 수량 합계 라벨 */
 export function freeCarsSummaryLabel(freeCarsPerDay: number) {
   const n = Math.max(1, Math.min(5, Math.floor(freeCarsPerDay) || 1));
@@ -43,24 +66,55 @@ export function freeCarsFootnoteLabel(freeCarsPerDay: number) {
   return `1일 ${n}대 무료`;
 }
 
+export function presetupFreeFootnoteLabel(): string {
+  return `사전세팅일은 1일 ${PRESETUP_DAILY_FREE_CAP_WON.toLocaleString()}원까지 무료`;
+}
+
+function applyPresetupDayDiscounts(
+  withAmount: Array<ParkingRecord & { amount: number }>
+): { discounts: Record<string, number>; freeEntries: DayFree[] } {
+  const discounts: Record<string, number> = {};
+  const freeEntries: DayFree[] = [];
+  let budget = PRESETUP_DAILY_FREE_CAP_WON;
+
+  for (const r of withAmount) {
+    if (budget <= 0) break;
+    const discount = Math.min(r.amount, budget);
+    if (discount <= 0) continue;
+    discounts[r.id] = discount;
+    freeEntries.push({ ...r, discount });
+    budget -= discount;
+  }
+
+  return { discounts, freeEntries };
+}
+
 /**
  * 정산 일자별·합계 집계.
  * 각 일자마다 당일 발급 총액이 높은 순으로 freeCarsPerDay대를 무료 처리.
+ * 사전세팅일은 1일 18,000원까지(비싼 차량부터) 무료.
  */
 export function computeSettlementTotals(
   settlementDatesSorted: string[],
   records: ParkingRecord[],
   freeCarsPerDay: number,
   options?: { presetupDates?: Set<string> }
-): { dayFreeList: DayFree[]; daySummaries: DaySummary[]; totals: SettlementTotals } {
+): {
+  dayFreeList: DayFree[];
+  daySummaries: DaySummary[];
+  totals: SettlementTotals;
+  recordDiscounts: Record<string, number>;
+} {
   const globalFreeN = Math.max(1, Math.min(5, Math.floor(freeCarsPerDay) || 1));
   const presetupDates = options?.presetupDates ?? new Set<string>();
+  const recordDiscounts: Record<string, number> = {};
 
   if (!settlementDatesSorted.length || !records.length) {
     return {
       dayFreeList: [],
       daySummaries: [],
       totals: { all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0, amount: 0 },
+      recordDiscounts: {},
     };
   }
 
@@ -83,8 +137,6 @@ export function computeSettlementTotals(
     const dayRecs = byDate.get(date) ?? [];
     if (dayRecs.length === 0) continue;
 
-    const freeN = presetupDates.has(date) ? 1 : globalFreeN;
-
     const withAmount = dayRecs
       .map((r) => ({ ...r, amount: calcParkingRecordAmount(r) }))
       .sort((a, b) => {
@@ -92,10 +144,20 @@ export function computeSettlementTotals(
         return a.id.localeCompare(b.id);
       });
 
-    const freeIds = new Set(withAmount.slice(0, Math.min(freeN, withAmount.length)).map((r) => r.id));
-    for (const f of withAmount.slice(0, Math.min(freeN, withAmount.length))) {
-      freeList.push(f);
+    let dayDiscounts: Record<string, number>;
+    if (presetupDates.has(date)) {
+      const applied = applyPresetupDayDiscounts(withAmount);
+      dayDiscounts = applied.discounts;
+      freeList.push(...applied.freeEntries);
+    } else {
+      dayDiscounts = {};
+      for (const f of withAmount.slice(0, Math.min(globalFreeN, withAmount.length))) {
+        dayDiscounts[f.id] = f.amount;
+        freeList.push({ ...f, discount: f.amount });
+      }
     }
+
+    Object.assign(recordDiscounts, dayDiscounts);
 
     let dayAllDay = 0;
     let day2h = 0;
@@ -104,19 +166,24 @@ export function computeSettlementTotals(
     let dayAmount = 0;
 
     for (const r of dayRecs) {
-      if (freeIds.has(r.id)) continue;
+      const full = calcParkingRecordAmount(r);
+      const discount = dayDiscounts[r.id] ?? 0;
+      const amt = Math.max(0, full - discount);
+      const fullyFree = full > 0 && discount >= full;
 
-      const amt = calcParkingRecordAmount(r);
       dayAmount += amt;
-      dayAllDay += r.all_day_cnt;
-      day2h += r["2h_cnt"];
-      day1h += r["1h_cnt"];
-      day30m += r["30m_cnt"];
       totalAmount += amt;
-      totalAllDay += r.all_day_cnt;
-      total2h += r["2h_cnt"];
-      total1h += r["1h_cnt"];
-      total30m += r["30m_cnt"];
+
+      if (!fullyFree) {
+        dayAllDay += r.all_day_cnt;
+        day2h += r["2h_cnt"];
+        day1h += r["1h_cnt"];
+        day30m += r["30m_cnt"];
+        totalAllDay += r.all_day_cnt;
+        total2h += r["2h_cnt"];
+        total1h += r["1h_cnt"];
+        total30m += r["30m_cnt"];
+      }
     }
 
     summaries.push({
@@ -139,5 +206,6 @@ export function computeSettlementTotals(
       "30m_cnt": total30m,
       amount: totalAmount,
     },
+    recordDiscounts,
   };
 }

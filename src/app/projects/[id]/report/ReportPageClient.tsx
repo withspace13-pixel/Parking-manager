@@ -8,10 +8,13 @@ import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
 import {
-  calcParkingRecordAmount,
   computeSettlementTotals,
   freeCarsFootnoteLabel,
   freeCarsSummaryLabel,
+  isRecordFullyDiscounted,
+  presetupFreeFootnoteLabel,
+  settlementRecordCharge,
+  settlementRecordDiscount,
 } from "@/lib/settlement-calc";
 import { useProjectFreeCarsPerDay } from "@/lib/use-project-free-cars-per-day";
 import {
@@ -246,7 +249,7 @@ export default function ReportPageClient() {
     [eventRooms, records]
   );
 
-  const { dayFreeList, daySummaries, totals } = useMemo(
+  const { daySummaries, totals, recordDiscounts } = useMemo(
     () =>
       computeSettlementTotals(settlementDatesSorted, filteredRecords, freeCarsPerDay, {
         presetupDates: presetupDateSet,
@@ -267,14 +270,12 @@ export default function ReportPageClient() {
     [filteredRecords]
   );
 
-  const freeRecordIdSet = useMemo(() => new Set(dayFreeList.map((f) => f.id)), [dayFreeList]);
-
   const listTotals = useMemo(() => {
     return sortedRecords.reduce(
       (acc, r) => {
-        const isFree = freeRecordIdSet.has(r.id);
-        const amount = isFree ? 0 : calcParkingRecordAmount(r);
-        if (!isFree) {
+        const fullyFree = isRecordFullyDiscounted(r, recordDiscounts);
+        const amount = settlementRecordCharge(r, recordDiscounts);
+        if (!fullyFree) {
           acc.all_day_cnt += r.all_day_cnt;
           acc["2h_cnt"] += r["2h_cnt"];
           acc["1h_cnt"] += r["1h_cnt"];
@@ -285,7 +286,7 @@ export default function ReportPageClient() {
       },
       { all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0, amount: 0 }
     );
-  }, [sortedRecords, freeRecordIdSet]);
+  }, [sortedRecords, recordDiscounts]);
 
   const updateSettlementRange = (idx: number, key: "start" | "end", value: string) => {
     const v = value.slice(0, 10);
@@ -575,6 +576,7 @@ export default function ReportPageClient() {
           </table>
           <p className="px-8 pb-5 pt-2 text-sm font-semibold text-red-600">
             ※ 위 수량 및 금액은 {freeCarsFootnoteLabel(freeCarsPerDay)} 건을 제외한 기준입니다.
+            {presetupDateSet.size > 0 ? ` ${presetupFreeFootnoteLabel()} 적용.` : ""}
           </p>
         </div>
 
@@ -602,10 +604,13 @@ export default function ReportPageClient() {
               </thead>
               <tbody>
                 {sortedRecords.map((r) => {
-                  const isFree = freeRecordIdSet.has(r.id);
-                  const amount = isFree ? 0 : calcParkingRecordAmount(r);
+                  const discount = settlementRecordDiscount(r.id, recordDiscounts);
+                  const amount = settlementRecordCharge(r, recordDiscounts);
                   return (
-                    <tr key={r.id} className={`table-row-hover ${isFree ? "bg-amber-100" : "bg-white"}`}>
+                    <tr
+                      key={r.id}
+                      className={`table-row-hover ${discount > 0 ? "bg-amber-100" : "bg-white"}`}
+                    >
                       <td className="border-t border-[var(--border)] px-4 py-2 text-[var(--text-muted)]">{monthDay(r.date)}</td>
                       <td className="border-t border-[var(--border)] px-4 py-2 font-medium text-[var(--text)]">{r.vehicle_num}</td>
                       <td className="border-t border-[var(--border)] px-4 py-2 text-center text-[var(--text-muted)]">{r.all_day_cnt}</td>
@@ -629,7 +634,7 @@ export default function ReportPageClient() {
             </table>
           </div>
           <p className="mt-4 text-sm font-semibold text-red-600">
-            ※ 위 내역에서 노란색 부분은 {freeCarsFootnoteLabel(freeCarsPerDay)} 적용 차량입니다.
+            ※ 위 내역에서 노란색 부분은 무료·할인 적용 차량입니다.
           </p>
         </div>
 
