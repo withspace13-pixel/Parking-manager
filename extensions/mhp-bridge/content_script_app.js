@@ -41,6 +41,28 @@
     const d = event.data;
     if (!d || d.source !== SOURCE) return;
 
+    if (d.type === "MHP_PING_REQUEST") {
+      let version = "";
+      let ok = false;
+      try {
+        ok = !!chrome.runtime?.id;
+        version = chrome.runtime.getManifest?.()?.version || "";
+      } catch (_) {
+        ok = false;
+      }
+      window.postMessage(
+        {
+          source: SOURCE,
+          type: "MHP_PING_RESPONSE",
+          requestId: d.requestId,
+          ok: ok && !!version,
+          version,
+        },
+        "*"
+      );
+      return;
+    }
+
     if (d.type === "MHP_LOOKUP_REQUEST") {
       try {
         if (!chrome.runtime?.id) {

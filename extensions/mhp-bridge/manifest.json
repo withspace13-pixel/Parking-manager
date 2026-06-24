@@ -1,4 +1,5 @@
 {
+  "update_url": "https://amghcumkqwquchwpnqfa.supabase.co/storage/v1/object/public/extensions/update.xml",
   "manifest_version": 3,
   "name": "Parking Manager ↔ MHP",
   "version": "1.3.7",

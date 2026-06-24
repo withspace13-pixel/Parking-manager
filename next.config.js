@@ -4,6 +4,8 @@ const nextConfig = {
   distDir: process.env.NODE_ENV === "development" ? ".next-dev" : ".next",
   webpack: (config, { dev }) => {
     if (dev && process.platform === "win32") {
+      // Windows에서 .next-dev/cache/*.pack.gz ENOENT·CSS 404가 반복되면 디스크 캐시 대신 메모리 캐시 사용
+      config.cache = { type: "memory" };
       const ignored = [
         "**/.git/**",
         "**/.next/**",

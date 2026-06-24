@@ -7,10 +7,19 @@ import { ArrowLeft, Copy, Home, Save, X } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
-import type { ParkingSupport } from "@/lib/supabase";
+import type { ParkingSupport, Project } from "@/lib/supabase";
 import { datesYmdToFormRanges, isWorkingDayYmd, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
 import { sanitizeManagerPhoneDigits } from "@/lib/manager-display";
 import { OrgNameField } from "@/components/OrgNameField";
+import { ManagerContactField } from "@/components/ManagerContactField";
+import {
+  buildManagerContactsFromProjects,
+  fetchManagerContacts,
+  loadManagerContactsLocal,
+  mergeManagerContacts,
+  persistManagerContact,
+  type ManagerContact,
+} from "@/lib/manager-contacts";
 import favoriteOrgNamesJson from "@/data/favorite-org-names.json";
 import { buildOrgNameList } from "@/lib/org-name-suggestions";
 
@@ -73,11 +82,30 @@ export default function NewProjectPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [orgNameCandidates, setOrgNameCandidates] = useState<string[]>([]);
+  const [managerContacts, setManagerContacts] = useState<ManagerContact[]>([]);
 
   useEffect(() => {
     // 요청대로: favorite-org-names.json에 있는 목록만 후보로 사용합니다.
     setOrgNameCandidates(buildOrgNameList(FAVORITE_ORG_NAMES, []));
   }, []);
+
+  useEffect(() => {
+    void (async () => {
+      if (isDevMode()) {
+        const fromProjects = buildManagerContactsFromProjects(devStore.getProjects());
+        setManagerContacts(mergeManagerContacts(loadManagerContactsLocal(), fromProjects));
+        return;
+      }
+      const [contacts, projectsRes] = await Promise.all([
+        fetchManagerContacts(supabase),
+        supabase.from("projects").select("manager, manager_phone, org_name, updated_at"),
+      ]);
+      const fromProjects = buildManagerContactsFromProjects((projectsRes.data ?? []) as Project[]);
+      setManagerContacts(
+        mergeManagerContacts(contacts, fromProjects, loadManagerContactsLocal())
+      );
+    })();
+  }, [devStore.data]);
 
   const normalizedRanges = (() => {
     return ranges
@@ -217,6 +245,16 @@ export default function NewProjectPage() {
           },
           roomList
         );
+        setManagerContacts(
+          persistManagerContact({
+            isDev: true,
+            supabase,
+            contacts: managerContacts,
+            name: mgr,
+            orgName: name,
+            phone: managerPhone,
+          })
+        );
         router.push("/");
         router.refresh();
         return;
@@ -251,6 +289,17 @@ export default function NewProjectPage() {
           .insert(rooms);
         if (roomsError) throw roomsError;
       }
+
+      setManagerContacts(
+        persistManagerContact({
+          isDev: false,
+          supabase,
+          contacts: managerContacts,
+          name: mgr,
+          orgName: name,
+          phone: managerPhone,
+        })
+      );
 
       router.push("/");
       router.refresh();
@@ -325,23 +374,14 @@ export default function NewProjectPage() {
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text)]">담당자 정보</label>
-                <input
-                  type="text"
-                  value={manager}
-                  onChange={(e) => setManager(e.target.value)}
-                  className="input w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
-                  placeholder="예: 홍길동"
+                <ManagerContactField
+                  manager={manager}
+                  managerPhone={managerPhone}
+                  orgName={org_name}
+                  contacts={managerContacts}
+                  onManagerChange={setManager}
+                  onManagerPhoneChange={setManagerPhone}
                 />
-                <input
-                  type="tel"
-                  inputMode="numeric"
-                  value={managerPhone}
-                  onChange={(e) => setManagerPhone(sanitizeManagerPhoneDigits(e.target.value))}
-                  className="input mt-2 w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
-                  placeholder="예: 01012345678"
-                  autoComplete="tel"
-                />
-                <p className="mt-1.5 text-xs text-[var(--text-muted)]">숫자만 입력해 주세요. (하이픈 없이)</p>
               </div>
               <div className="sm:col-span-2">
                 <label className="mb-2 block text-sm font-medium text-[var(--text)]">행사명</label>

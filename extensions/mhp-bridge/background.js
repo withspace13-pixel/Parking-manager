@@ -110,6 +110,7 @@ function deliverToApp(appTabId, payload) {
     detail: payload.detail ?? "",
     diff: payload.diff ?? null,
     appliedDiscountCounts: payload.appliedDiscountCounts ?? null,
+    actualCounts: payload.actualCounts ?? null,
   };
 
   chrome.tabs.sendMessage(appTabId, envelope, () => {
@@ -131,6 +132,7 @@ function deliverToApp(appTabId, payload) {
               detail: p.detail,
               diff: p.diff,
               appliedDiscountCounts: p.appliedDiscountCounts,
+              actualCounts: p.actualCounts,
             },
             "*"
           );
@@ -147,6 +149,7 @@ function deliverToApp(appTabId, payload) {
             detail: envelope.detail,
             diff: envelope.diff,
             appliedDiscountCounts: envelope.appliedDiscountCounts,
+            actualCounts: envelope.actualCounts,
           },
         ],
         world: "MAIN",
@@ -358,7 +361,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "MHP_SYNC_RESULT") {
-    const { appTabId, requestId, ok, error, detail, diff } = msg;
+    const { appTabId, requestId, ok, error, detail, diff, actualCounts } = msg;
     deliverToApp(appTabId, {
       requestId,
       ok: !!ok,
@@ -366,18 +369,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       error: error ?? "",
       detail: detail ?? "",
       diff: diff ?? null,
+      actualCounts: actualCounts ?? null,
     });
     return false;
   }
 
   if (msg.type === "MHP_CANCEL_ALL_RESULT") {
-    const { appTabId, requestId, ok, error, detail } = msg;
+    const { appTabId, requestId, ok, error, detail, actualCounts } = msg;
     deliverToApp(appTabId, {
       requestId,
       ok: !!ok,
       kind: "cancel_all",
       error: error ?? "",
       detail: detail ?? "",
+      actualCounts: actualCounts ?? null,
     });
     return false;
   }

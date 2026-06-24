@@ -61,6 +61,7 @@ export type MhpSyncResponsePayload = {
   error?: string;
   detail?: string;
   diff?: { cancelled?: number; added?: number } | null;
+  actualCounts?: { all_day_cnt: number; "2h_cnt": number; "1h_cnt": number; "30m_cnt": number } | null;
 };
 
 export type MhpCancelAllRequestPayload = {
@@ -77,6 +78,7 @@ export type MhpCancelAllResponsePayload = {
   ok: boolean;
   error?: string;
   detail?: string;
+  actualCounts?: { all_day_cnt: number; "2h_cnt": number; "1h_cnt": number; "30m_cnt": number } | null;
 };
 
 export type MhpCreditRequestPayload = {
@@ -92,6 +94,20 @@ export type MhpCreditResponsePayload = {
   ok: boolean;
   creditText?: string;
   error?: string;
+};
+
+export type MhpPingRequestPayload = {
+  source: typeof MHP_EXTENSION_MSG_SOURCE;
+  type: "MHP_PING_REQUEST";
+  requestId: string;
+};
+
+export type MhpPingResponsePayload = {
+  source: typeof MHP_EXTENSION_MSG_SOURCE;
+  type: "MHP_PING_RESPONSE";
+  requestId: string;
+  ok: boolean;
+  version?: string;
 };
 
 export function postMhpLookupRequest(vehicleNum: string, requestId: string): void {
@@ -192,6 +208,22 @@ export function isMhpCreditResponse(data: unknown): data is MhpCreditResponsePay
   if (typeof data !== "object" || data === null) return false;
   const d = data as MhpCreditResponsePayload;
   return d.source === MHP_EXTENSION_MSG_SOURCE && d.type === "MHP_CREDIT_RESPONSE";
+}
+
+export function postMhpPingRequest(requestId: string): void {
+  if (typeof window === "undefined") return;
+  const payload: MhpPingRequestPayload = {
+    source: MHP_EXTENSION_MSG_SOURCE,
+    type: "MHP_PING_REQUEST",
+    requestId,
+  };
+  window.postMessage(payload, "*");
+}
+
+export function isMhpPingResponse(data: unknown): data is MhpPingResponsePayload {
+  if (typeof data !== "object" || data === null) return false;
+  const d = data as MhpPingResponsePayload;
+  return d.source === MHP_EXTENSION_MSG_SOURCE && d.type === "MHP_PING_RESPONSE";
 }
 
 /** 확장에서 오는 `입차일시 … · 주차시간 …` 문자열을 두 칸용으로 분리 */

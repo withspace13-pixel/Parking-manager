@@ -11,6 +11,16 @@ import type { ParkingSupport, Project } from "@/lib/supabase";
 import { parseParkingSupport } from "@/lib/parking-support";
 import { datesYmdToFormRanges, isWorkingDayYmd, periodLabelMonthDayFromSortedYmd } from "@/lib/schedule-dates";
 import { sanitizeManagerPhoneDigits } from "@/lib/manager-display";
+import { ManagerContactField } from "@/components/ManagerContactField";
+import {
+  buildManagerContactsFromProjects,
+  fetchManagerContacts,
+  loadManagerContactsLocal,
+  mergeManagerContacts,
+  persistManagerContact,
+  type ManagerContact,
+} from "@/lib/manager-contacts";
+import { isPresetupRoomName, PRESETUP_ROOM_NAME } from "@/lib/presetup";
 
 /** YYYY-MM-DD 형식인지 확인 */
 function isDateStr(s: string): boolean {
@@ -73,6 +83,25 @@ export default function EditProjectForm() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [managerContacts, setManagerContacts] = useState<ManagerContact[]>([]);
+
+  useEffect(() => {
+    void (async () => {
+      if (isDevMode()) {
+        const fromProjects = buildManagerContactsFromProjects(devStore.getProjects());
+        setManagerContacts(mergeManagerContacts(loadManagerContactsLocal(), fromProjects));
+        return;
+      }
+      const [contacts, projectsRes] = await Promise.all([
+        fetchManagerContacts(supabase),
+        supabase.from("projects").select("manager, manager_phone, org_name, updated_at"),
+      ]);
+      const fromProjects = buildManagerContactsFromProjects((projectsRes.data ?? []) as Project[]);
+      setManagerContacts(
+        mergeManagerContacts(contacts, fromProjects, loadManagerContactsLocal())
+      );
+    })();
+  }, [devStore.data]);
 
   useEffect(() => {
     if (!projectId) {
@@ -90,9 +119,10 @@ export default function EditProjectForm() {
       setManager(p.manager);
       setManagerPhone(sanitizeManagerPhoneDigits(p.manager_phone ?? ""));
       setEventName(p.event_name ?? "");
-      // 저장된 날짜별 룸(project_rooms)이 있으면 그 날짜들로 일정 구간 복원 (중간 날 제거·띄엄일정 반영)
+      // 저장된 날짜별 룸(project_rooms)이 있으면 그 날짜들로 일정 구간 복원 (사전세팅 일자 제외)
       const roomDates = Object.keys(roomMap)
         .map((d) => String(d).slice(0, 10))
+        .filter((d) => !isPresetupRoomName(roomMap[d]))
         .sort();
       const hasWeekendRoom = Object.keys(roomMap).some((d) => isWeekendDate(d));
       if (roomDates.length > 0) {
@@ -276,6 +306,13 @@ export default function EditProjectForm() {
         date,
         room_name: (roomByDate[date] ?? "").trim() || "미지정",
       }));
+      for (const [date, room_name] of Object.entries(roomByDate)) {
+        if (!isPresetupRoomName(room_name)) continue;
+        const ymd = String(date).slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) continue;
+        if (roomList.some((r) => r.date === ymd)) continue;
+        roomList.push({ date: ymd, room_name: PRESETUP_ROOM_NAME });
+      }
 
       if (isDevMode()) {
         devStore.updateProject(projectId, {
@@ -289,6 +326,16 @@ export default function EditProjectForm() {
           remarks: String(remarks ?? "").trim() || null,
         });
         devStore.saveRooms(projectId, roomList);
+        setManagerContacts(
+          persistManagerContact({
+            isDev: true,
+            supabase,
+            contacts: managerContacts,
+            name: mgr,
+            orgName: name,
+            phone: managerPhone,
+          })
+        );
         router.push("/");
         router.refresh();
         return;
@@ -320,6 +367,17 @@ export default function EditProjectForm() {
         const { error: roomsError } = await supabase.from("project_rooms").insert(rows);
         if (roomsError) throw roomsError;
       }
+
+      setManagerContacts(
+        persistManagerContact({
+          isDev: false,
+          supabase,
+          contacts: managerContacts,
+          name: mgr,
+          orgName: name,
+          phone: managerPhone,
+        })
+      );
 
       router.push("/");
       router.refresh();
@@ -412,23 +470,14 @@ export default function EditProjectForm() {
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text)]">담당자 정보</label>
-                <input
-                  type="text"
-                  value={manager}
-                  onChange={(e) => setManager(e.target.value)}
-                  className="input w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
-                  placeholder="예: 홍길동"
+                <ManagerContactField
+                  manager={manager}
+                  managerPhone={managerPhone}
+                  orgName={org_name}
+                  contacts={managerContacts}
+                  onManagerChange={setManager}
+                  onManagerPhoneChange={setManagerPhone}
                 />
-                <input
-                  type="tel"
-                  inputMode="numeric"
-                  value={managerPhone}
-                  onChange={(e) => setManagerPhone(sanitizeManagerPhoneDigits(e.target.value))}
-                  className="input mt-2 w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
-                  placeholder="예: 01012345678"
-                  autoComplete="tel"
-                />
-                <p className="mt-1.5 text-xs text-[var(--text-muted)]">숫자만 입력해 주세요. (하이픈 없이)</p>
               </div>
               <div className="sm:col-span-2">
                 <label className="mb-2 block text-sm font-medium text-[var(--text)]">행사명</label>

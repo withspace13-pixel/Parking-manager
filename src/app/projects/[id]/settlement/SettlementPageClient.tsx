@@ -21,6 +21,7 @@ import { useProjectFreeCarsPerDay } from "@/lib/use-project-free-cars-per-day";
 import {
   buildUsageDaysBadgeText,
   getActivePresetupDateSet,
+  getProjectEffectiveEndYmd,
   getUsageDatesSorted,
   periodLabelMonthDayFromRooms,
   type ProjectRoomDate,
@@ -48,6 +49,11 @@ function monthDay(d: string) {
   if (d.length < 10) return d;
   const [, m, day] = d.split("-");
   return `${m}/${day}`;
+}
+
+function todayString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function toMonthDayParts(ymd: string) {
@@ -109,10 +115,21 @@ export default function SettlementPageClient() {
   /** 정산 일자 집계 시 주말 포함(기본: 제외) */
   const [includeWeekendsInSettlement, setIncludeWeekendsInSettlement] = useState(false);
   const { freeCarsPerDay, setFreeCarsPerDay } = useProjectFreeCarsPerDay(projectId, project);
+  const [today] = useState(() => todayString());
+
+  const effectiveEndYmd = useMemo(
+    () => (project ? getProjectEffectiveEndYmd(project, eventRooms) : ""),
+    [project, eventRooms]
+  );
+
+  const presetupBundleOptions = useMemo(
+    () => ({ effectiveEndYmd, todayYmd: today }),
+    [effectiveEndYmd, today]
+  );
 
   const usageDates = useMemo(
-    () => getUsageDatesSorted(eventRooms, records, eventDates),
-    [eventRooms, records, eventDates]
+    () => getUsageDatesSorted(eventRooms, records, eventDates, presetupBundleOptions),
+    [eventRooms, records, eventDates, presetupBundleOptions]
   );
 
   const projectMin = usageDates.length > 0 ? usageDates[0] : project ? String(project.start_date).slice(0, 10) : "";
@@ -235,8 +252,8 @@ export default function SettlementPageClient() {
 
 
   const presetupDateSet = useMemo(
-    () => getActivePresetupDateSet(eventRooms, records),
-    [eventRooms, records]
+    () => getActivePresetupDateSet(eventRooms, records, presetupBundleOptions),
+    [eventRooms, records, presetupBundleOptions]
   );
 
   const { daySummaries, totals, recordDiscounts } = useMemo(
@@ -296,9 +313,10 @@ export default function SettlementPageClient() {
       eventRooms,
       records,
       eventDates,
-      fallback > 0 ? fallback : undefined
+      fallback > 0 ? fallback : undefined,
+      presetupBundleOptions
     );
-  }, [eventRooms, records, eventDates, usageDates.length, project?.start_date, project?.end_date]);
+  }, [eventRooms, records, eventDates, usageDates.length, project?.start_date, project?.end_date, presetupBundleOptions]);
 
   const updateSettlementRange = (idx: number, key: "start" | "end", value: string) => {
     const v = value.slice(0, 10);

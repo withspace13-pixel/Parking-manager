@@ -17,12 +17,19 @@ import {
   ChevronDown,
   MoreHorizontal,
   Pencil,
+  MessageCircle,
+  ClipboardList,
 } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
 import type { Project } from "@/lib/supabase";
 import {
+  getPrimaryDashboardDateFromRooms,
+  getProjectEffectiveEndYmd,
+  getProjectPeriodDatesForDisplay,
+  isPresetupRoomName,
+  isProjectArchivedByEndDate,
   periodLabelIsoFromRooms,
   periodLabelMonthDayFromRooms,
   periodLabelShortYmdFromRooms,
@@ -32,9 +39,13 @@ import { ManagerNameWithPhone } from "@/lib/manager-display";
 import { compareMainEventListByRoom } from "@/lib/main-event-room-sort";
 import { isArchivedProjectExpiredForPurge } from "@/lib/archive-retention";
 import { ParkingSection } from "@/components/ParkingSection";
+import { SatisfactionSurveyPanel } from "@/components/SatisfactionSurveyPanel";
+import { ThankYouSmsPanel } from "@/components/ThankYouSmsPanel";
 import { MhpStoreCreditBadge } from "@/components/MhpStoreCreditBadge";
+import { MhpExtensionStatusBadge } from "@/components/MhpExtensionStatusBadge";
 import { Badge } from "@/components/ui/Badge";
 import { useMhpStoreCredit } from "@/lib/use-mhp-store-credit";
+import { useMhpExtensionStatus } from "@/lib/use-mhp-extension-status";
 import {
   cycleParkingSupport,
   parseParkingSupport,
@@ -75,10 +86,13 @@ function koreanDateTitle(d: string) {
 
 type ProjectWithRoom = Project & { roomName: string };
 
+type DashboardTab = "active" | "archive" | "thank_you" | "survey";
+
 export default function HomePage() {
   const router = useRouter();
   const [today] = useState(() => todayString());
-  const [listMode, setListMode] = useState<"active" | "archive">("active");
+  const [dashboardTab, setDashboardTab] = useState<DashboardTab>("active");
+  const isEventListTab = dashboardTab === "active" || dashboardTab === "archive";
   const [supportFilter, setSupportFilter] = useState<
     "all" | "onlySupport" | "onlyNoSupport" | "onlyUnknown" | "onlyNeedsCheck"
   >("all");
@@ -92,7 +106,8 @@ export default function HomePage() {
   const [periodLabelById, setPeriodLabelById] = useState<
     Record<string, { list: string; detail: string; full: string }>
   >({});
-  /** 행사별 대표 일자(정렬된 project_rooms 날짜 중 첫날, 없으면 end_date) — 보관함 전체 목록 클릭 시 selectedDate 동기화용 */
+  const [roomsByProjectId, setRoomsByProjectId] = useState<Record<string, ProjectRoomDate[]>>({});
+  /** 행사별 대표 일자(본 행사 첫날, 사전세팅 제외) — 보관함 전체 목록 클릭 시 selectedDate 동기화용 */
   const [primaryRoomDateByProjectId, setPrimaryRoomDateByProjectId] = useState<Record<string, string>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingParkingId, setTogglingParkingId] = useState<string | null>(null);
@@ -100,6 +115,7 @@ export default function HomePage() {
   const devStore = useDevStore();
   const projectPickerRef = useRef<HTMLDivElement | null>(null);
   const mhpStoreCredit = useMhpStoreCredit();
+  const mhpExtensionStatus = useMhpExtensionStatus();
   /** roomByProjectId가 현재 selectedDate 기준으로 갱신되었을 때만 선택 해제(useEffect)를 적용 — 날짜 전환 직후 레이스 방지 */
   const lastRoomFetchForDateRef = useRef<string | null>(null);
   const roomByProjectIdCacheRef = useRef<Map<string, Record<string, string>>>(new Map());
@@ -123,19 +139,35 @@ export default function HomePage() {
     })();
   }, [devStore.data]);
 
+  const projectEffectiveEndYmd = useMemo(() => {
+    const map: Record<string, string> = {};
+    allProjects.forEach((p) => {
+      map[p.id] = getProjectEffectiveEndYmd(p, roomsByProjectId[p.id] ?? []);
+    });
+    return map;
+  }, [allProjects, roomsByProjectId]);
+
   const activeProjects = useMemo(
-    () => allProjects.filter((p) => new Date(p.end_date).toISOString().slice(0, 10) >= today),
-    [allProjects]
+    () =>
+      allProjects.filter(
+        (p) => !isProjectArchivedByEndDate(projectEffectiveEndYmd[p.id] ?? String(p.end_date).slice(0, 10), today)
+      ),
+    [allProjects, projectEffectiveEndYmd, today]
   );
   const archivedProjects = useMemo(
-    () => allProjects.filter((p) => new Date(p.end_date).toISOString().slice(0, 10) < today),
-    [allProjects]
+    () =>
+      allProjects.filter((p) =>
+        isProjectArchivedByEndDate(projectEffectiveEndYmd[p.id] ?? String(p.end_date).slice(0, 10), today)
+      ),
+    [allProjects, projectEffectiveEndYmd, today]
   );
-  const sourceProjects = listMode === "active" ? activeProjects : archivedProjects;
+  const sourceProjects = dashboardTab === "active" ? activeProjects : dashboardTab === "archive" ? archivedProjects : [];
 
   /** 보관함(행사 종료) 항목: 종료일 기준 30일 경과 시 자동 삭제 — 대시보드 방문 시 실행 */
   useEffect(() => {
-    const expired = allProjects.filter((p) => isArchivedProjectExpiredForPurge(p.end_date, today));
+    const expired = allProjects.filter((p) =>
+      isArchivedProjectExpiredForPurge(projectEffectiveEndYmd[p.id] ?? String(p.end_date).slice(0, 10), today)
+    );
     if (expired.length === 0) return;
 
     if (isDevMode()) {
@@ -156,7 +188,7 @@ export default function HomePage() {
       setAllProjects(normalizeProjectsFromApi((data || []) as Project[]));
       setSelectedProjectId((prev) => (prev && ids.includes(prev) ? null : prev));
     })();
-  }, [allProjects, today, loading, devStore.data]);
+  }, [allProjects, today, loading, devStore.data, projectEffectiveEndYmd]);
 
   useEffect(() => {
     if (sourceProjects.length === 0) {
@@ -222,6 +254,7 @@ export default function HomePage() {
   useEffect(() => {
     if (allProjects.length === 0) {
       setPeriodLabelById({});
+      setRoomsByProjectId({});
       setPrimaryRoomDateByProjectId({});
       return;
     }
@@ -243,15 +276,16 @@ export default function HomePage() {
     if (isDevMode()) {
       const next: Record<string, { list: string; detail: string; full: string }> = {};
       const primary: Record<string, string> = {};
+      const roomsMap: Record<string, ProjectRoomDate[]> = {};
       allProjects.forEach((p) => {
         const rooms: ProjectRoomDate[] = (devStore.getRooms(p.id) ?? []).map((r) => ({
           date: String(r.date).slice(0, 10),
           room_name: r.room_name ?? "",
         }));
-        const dates = Array.from(new Set(rooms.map((r) => r.date)))
-          .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
-          .sort();
-        primary[p.id] = dates.length > 0 ? dates[0]! : String(p.end_date).slice(0, 10);
+        roomsMap[p.id] = rooms;
+        const effectiveEnd = getProjectEffectiveEndYmd(p, rooms);
+        const dates = getProjectPeriodDatesForDisplay(rooms, effectiveEnd, today);
+        primary[p.id] = getPrimaryDashboardDateFromRooms(rooms, p.end_date);
         if (dates.length > 0) {
           next[p.id] = {
             list: periodLabelMonthDayFromRooms(rooms, dates),
@@ -263,6 +297,7 @@ export default function HomePage() {
         }
       });
       setPeriodLabelById(next);
+      setRoomsByProjectId(roomsMap);
       setPrimaryRoomDateByProjectId(primary);
       return;
     }
@@ -286,10 +321,9 @@ export default function HomePage() {
         const primary: Record<string, string> = {};
         allProjects.forEach((p) => {
           const rooms = roomsByProject[p.id] ?? [];
-          const dates = Array.from(new Set(rooms.map((r) => r.date)))
-            .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
-            .sort();
-          primary[p.id] = dates.length > 0 ? dates[0]! : String(p.end_date).slice(0, 10);
+          const effectiveEnd = projectEffectiveEndYmd[p.id] ?? getProjectEffectiveEndYmd(p, rooms);
+          const dates = getProjectPeriodDatesForDisplay(rooms, effectiveEnd, today);
+          primary[p.id] = getPrimaryDashboardDateFromRooms(rooms, p.end_date);
           if (dates.length > 0) {
             next[p.id] = {
               list: periodLabelMonthDayFromRooms(rooms, dates),
@@ -301,9 +335,10 @@ export default function HomePage() {
           }
         });
         setPeriodLabelById(next);
+        setRoomsByProjectId(roomsByProject);
         setPrimaryRoomDateByProjectId(primary);
       });
-  }, [allProjects, devStore.data]);
+  }, [allProjects, devStore.data, today, projectEffectiveEndYmd]);
 
   const projectsForDate = useMemo(() => {
     // 해당 일자에 project_rooms가 존재하는 행사만 표시 (띄엄띄엄 일정 지원)
@@ -388,7 +423,7 @@ export default function HomePage() {
 
   useEffect(() => {
     setSelectedProjectId(null);
-  }, [listMode]);
+  }, [dashboardTab]);
 
   const handleSelectArchiveFullListRow = (p: Project) => {
     const d = primaryRoomDateByProjectId[p.id] ?? String(p.end_date).slice(0, 10);
@@ -402,7 +437,7 @@ export default function HomePage() {
   const handleDeleteProject = async (projectId: string) => {
     if (deletingId) return;
     const message =
-      listMode === "archive"
+      dashboardTab === "archive"
         ? "이 행사를 보관함에서 삭제할까요? 삭제 후 복구할 수 없습니다."
         : "이 기관(행사)을 삭제할까요? 삭제 후 복구할 수 없습니다.";
     if (!confirm(message)) return;
@@ -464,7 +499,7 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() => {
-                  setListMode("active");
+                  setDashboardTab("active");
                   setSupportFilter("all");
                   setSelectedDate(today);
                   setSelectedProjectId(null);
@@ -481,12 +516,20 @@ export default function HomePage() {
                 <Badge variant="secondary">개발자 모드</Badge>
               )}
             </div>
-            <MhpStoreCreditBadge
-              display={mhpStoreCredit.display}
-              error={mhpStoreCredit.error}
-              loading={mhpStoreCredit.loading}
-              onRefresh={mhpStoreCredit.refresh}
-            />
+            <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+              <MhpExtensionStatusBadge
+                status={mhpExtensionStatus.status}
+                onRefresh={mhpExtensionStatus.refresh}
+                missingHint={mhpExtensionStatus.missingHint}
+                outdatedHint={mhpExtensionStatus.outdatedHint}
+              />
+              <MhpStoreCreditBadge
+                display={mhpStoreCredit.display}
+                error={mhpStoreCredit.error}
+                loading={mhpStoreCredit.loading}
+                onRefresh={mhpStoreCredit.refresh}
+              />
+            </div>
           </div>
         </div>
       </header>
@@ -495,12 +538,12 @@ export default function HomePage() {
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <h2 className="text-xl font-bold text-[var(--text)]">기관 목록</h2>
-            <div className="inline-flex rounded-full bg-[var(--bg)] p-1 text-sm">
+            <div className="inline-flex flex-wrap rounded-full bg-[var(--bg)] p-1 text-sm">
               <button
                 type="button"
-                onClick={() => setListMode("active")}
+                onClick={() => setDashboardTab("active")}
                 className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 font-medium ${
-                  listMode === "active"
+                  dashboardTab === "active"
                     ? "bg-white text-[var(--text)] shadow-sm"
                     : "text-[var(--text-muted)] hover:text-[var(--text)]"
                 }`}
@@ -509,15 +552,39 @@ export default function HomePage() {
               </button>
               <button
                 type="button"
-                onClick={() => setListMode("archive")}
+                onClick={() => setDashboardTab("archive")}
                 className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 font-medium ${
-                  listMode === "archive"
+                  dashboardTab === "archive"
                     ? "bg-white text-[var(--text)] shadow-sm"
                     : "text-[var(--text-muted)] hover:text-[var(--text)]"
                 }`}
               >
                 <Archive className="h-3.5 w-3.5" />
                 보관함
+              </button>
+              <button
+                type="button"
+                onClick={() => setDashboardTab("thank_you")}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 font-medium ${
+                  dashboardTab === "thank_you"
+                    ? "bg-white text-[var(--text)] shadow-sm"
+                    : "text-[var(--text-muted)] hover:text-[var(--text)]"
+                }`}
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                감사문자
+              </button>
+              <button
+                type="button"
+                onClick={() => setDashboardTab("survey")}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 font-medium ${
+                  dashboardTab === "survey"
+                    ? "bg-white text-[var(--text)] shadow-sm"
+                    : "text-[var(--text-muted)] hover:text-[var(--text)]"
+                }`}
+              >
+                <ClipboardList className="h-3.5 w-3.5" />
+                만족도 조사
               </button>
             </div>
           </div>
@@ -530,6 +597,11 @@ export default function HomePage() {
           </Link>
         </div>
 
+        {dashboardTab === "survey" && <SatisfactionSurveyPanel projects={allProjects} />}
+
+        {dashboardTab === "thank_you" && <ThankYouSmsPanel projects={allProjects} />}
+
+        {isEventListTab && (
         <div className="card mb-10 p-6">
           <div className="mb-4 flex flex-col items-end gap-1.5">
             <div className="flex flex-wrap items-center justify-end gap-2">
@@ -678,8 +750,9 @@ export default function HomePage() {
             </div>
           </div>
         </div>
+        )}
 
-        {loading ? (
+        {isEventListTab && (loading ? (
           <p className="text-[var(--text-muted)]">로딩 중...</p>
         ) : allProjects.length === 0 ? (
           <div className="card p-12 text-center">
@@ -689,7 +762,7 @@ export default function HomePage() {
               기관 등록
             </Link>
           </div>
-        ) : listMode === "archive" && archivedProjects.length === 0 ? (
+        ) : dashboardTab === "archive" && archivedProjects.length === 0 ? (
           <div className="card p-12 text-center">
             <p className="text-[var(--text-muted)]">보관함에 종료된 행사가 없습니다.</p>
             <p className="mt-1 text-sm text-[var(--text-muted)]">종료일이 지난 행사가 여기에 표시됩니다.</p>
@@ -700,7 +773,7 @@ export default function HomePage() {
               <div className="card card-hover mb-6 overflow-visible p-0">
                 <div className="border-b border-[var(--border)] bg-[#F8FAFC] px-6 py-3">
               <h3 className="text-base font-bold text-[var(--text)]">
-                    {listMode === "archive"
+                    {dashboardTab === "archive"
                       ? `보관함 · ${koreanDateTitle(selectedDate)} 종료 행사 목록`
                       : `${koreanDateTitle(selectedDate)} 행사 목록`}
                   </h3>
@@ -714,7 +787,7 @@ export default function HomePage() {
                       }`}
                       onClick={() => setSelectedProjectId(p.id)}
                       onDoubleClick={(e) => {
-                        if (listMode !== "active") return;
+                        if (dashboardTab !== "active") return;
                         const t = e.target as HTMLElement;
                         if (t.closest("a, button, [data-action-menu-root]")) return;
                         router.push(`/projects/${p.id}/parking`);
@@ -775,7 +848,7 @@ export default function HomePage() {
                         </button>
                       </div>
                       <div className="flex items-center gap-2">
-                        {listMode === "archive" ? (
+                        {dashboardTab === "archive" ? (
                           <div className="flex items-center gap-2">
                             <Link
                               href={`/projects/${p.id}/report`}
@@ -873,13 +946,13 @@ export default function HomePage() {
 
             {projectsForDate.length === 0 && !loading && (
               <div className="card p-8 text-center text-[var(--text-muted)]">
-                {listMode === "archive"
+                {dashboardTab === "archive"
                   ? "선택한 일자에 종료된 행사가 없습니다."
                   : "선택한 일자에 진행 중인 행사가 없습니다."}
               </div>
             )}
 
-            {selectedProject && isDevMode() && listMode === "active" && (
+            {selectedProject && isDevMode() && dashboardTab === "active" && (
               <div className="mt-6">
                 <ParkingSection
                   projectId={selectedProject.id}
@@ -889,9 +962,9 @@ export default function HomePage() {
               </div>
             )}
           </>
-        )}
+        ))}
 
-        {listMode === "archive" && (
+        {dashboardTab === "archive" && (
         <details className="mt-10">
           <summary className="cursor-pointer text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text)]">
             보관함 전체 목록 (삭제 등)

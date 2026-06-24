@@ -20,6 +20,7 @@ import { useProjectFreeCarsPerDay } from "@/lib/use-project-free-cars-per-day";
 import {
   buildUsageDaysBadgeText,
   getActivePresetupDateSet,
+  getProjectEffectiveEndYmd,
   getUsageDatesSorted,
   periodLabelMonthDayFromRooms,
   type ProjectRoomDate,
@@ -47,6 +48,11 @@ function monthDay(d: string) {
   if (d.length < 10) return d;
   const [, m, day] = d.split("-");
   return `${m}/${day}`;
+}
+
+function todayString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function toMonthDayParts(ymd: string) {
@@ -106,14 +112,25 @@ export default function ReportPageClient() {
   const [settlementRanges, setSettlementRanges] = useState<Array<{ start: string; end: string }>>([]);
   const [includeWeekendsInSettlement, setIncludeWeekendsInSettlement] = useState(false);
   const { freeCarsPerDay, setFreeCarsPerDay } = useProjectFreeCarsPerDay(projectId, project);
+  const [today] = useState(() => todayString());
+
+  const effectiveEndYmd = useMemo(
+    () => (project ? getProjectEffectiveEndYmd(project, eventRooms) : ""),
+    [project, eventRooms]
+  );
+
+  const presetupBundleOptions = useMemo(
+    () => ({ effectiveEndYmd, todayYmd: today }),
+    [effectiveEndYmd, today]
+  );
 
   const dateList = useMemo(
     () => (project?.start_date && project?.end_date ? getDateRange(project.start_date, project.end_date) : []),
     [project?.start_date, project?.end_date]
   );
   const usageDates = useMemo(
-    () => getUsageDatesSorted(eventRooms, records, eventDates),
-    [eventRooms, records, eventDates]
+    () => getUsageDatesSorted(eventRooms, records, eventDates, presetupBundleOptions),
+    [eventRooms, records, eventDates, presetupBundleOptions]
   );
 
   const projectMin = usageDates.length > 0 ? usageDates[0] : project ? String(project.start_date).slice(0, 10) : "";
@@ -224,9 +241,10 @@ export default function ReportPageClient() {
       eventRooms,
       records,
       eventDates,
-      fallback > 0 ? fallback : undefined
+      fallback > 0 ? fallback : undefined,
+      presetupBundleOptions
     );
-  }, [eventRooms, records, eventDates, usageDates.length, dateList.length]);
+  }, [eventRooms, records, eventDates, usageDates.length, dateList.length, presetupBundleOptions]);
 
   const settlementLabelCompact = useMemo(() => {
     if (!settlementDatesSorted.length) return "선택된 정산 일자가 없습니다.";
@@ -245,8 +263,8 @@ export default function ReportPageClient() {
   }, [usageDates, settlementDatesSorted]);
 
   const presetupDateSet = useMemo(
-    () => getActivePresetupDateSet(eventRooms, records),
-    [eventRooms, records]
+    () => getActivePresetupDateSet(eventRooms, records, presetupBundleOptions),
+    [eventRooms, records, presetupBundleOptions]
   );
 
   const { daySummaries, totals, recordDiscounts } = useMemo(

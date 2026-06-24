@@ -63,32 +63,69 @@ export function getPresetupDateSet(rooms: ProjectRoomDate[]): Set<string> {
 
 export function hasPresetupCars(
   rooms: ProjectRoomDate[],
-  records: Pick<ParkingRecord, "date">[]
+  records: Pick<ParkingRecord, "date" | "all_day_cnt" | "2h_cnt" | "1h_cnt" | "30m_cnt">[]
 ): boolean {
   const presetupDate = findPresetupDateYmd(rooms);
   if (!presetupDate) return false;
-  return records.some((r) => String(r.date).slice(0, 10) === presetupDate);
+  return records.some((r) => {
+    if (String(r.date).slice(0, 10) !== presetupDate) return false;
+    return (
+      r.all_day_cnt > 0 ||
+      r["2h_cnt"] > 0 ||
+      r["1h_cnt"] > 0 ||
+      r["30m_cnt"] > 0
+    );
+  });
 }
 
-/** 사전세팅일에 차량이 있을 때만 presetup 날짜 포함 */
-export function getActivePresetupDateSet(
-  rooms: ProjectRoomDate[],
-  records: Pick<ParkingRecord, "date">[]
-): Set<string> {
-  return hasPresetupCars(rooms, records) ? getPresetupDateSet(rooms) : new Set();
+export type PresetupBundleOptions = {
+  /** 본 행사 종료일(사전세팅 제외). 보관함 여부 판단에 사용 */
+  effectiveEndYmd?: string;
+  todayYmd?: string;
+};
+
+function isEventStillActive(options?: PresetupBundleOptions): boolean {
+  if (!options?.effectiveEndYmd || !options?.todayYmd) return false;
+  return !isProjectArchivedByEndDate(options.effectiveEndYmd, options.todayYmd);
 }
 
 /**
- * 정산·표시에 쓸 사용 일자 (사전세팅일에 등록 차량 없으면 해당 일 제외)
+ * 사전세팅을 본 행사와 한 덩어리로 볼지.
+ * - 사전세팅일에 차량이 있거나
+ * - 행사가 아직 끝나지 않았는데 사전세팅 룸이 있으면 포함
+ */
+export function shouldBundlePresetupWithEvent(
+  rooms: ProjectRoomDate[],
+  records: Pick<ParkingRecord, "date" | "all_day_cnt" | "2h_cnt" | "1h_cnt" | "30m_cnt">[],
+  options?: PresetupBundleOptions
+): boolean {
+  if (!findPresetupDateYmd(rooms)) return false;
+  if (hasPresetupCars(rooms, records)) return true;
+  return isEventStillActive(options);
+}
+
+/** 정산·무료 처리에 적용할 사전세팅 일자 */
+export function getActivePresetupDateSet(
+  rooms: ProjectRoomDate[],
+  records: Pick<ParkingRecord, "date" | "all_day_cnt" | "2h_cnt" | "1h_cnt" | "30m_cnt">[],
+  options?: PresetupBundleOptions
+): Set<string> {
+  return shouldBundlePresetupWithEvent(rooms, records, options) ? getPresetupDateSet(rooms) : new Set();
+}
+
+/**
+ * 정산·표시에 쓸 사용 일자.
+ * 진행 중인 행사의 사전세팅은 본 행사 일정에 묶어 유지합니다.
  */
 export function getUsageDatesSorted(
   rooms: ProjectRoomDate[],
-  records: Pick<ParkingRecord, "date">[],
-  allRoomDatesSorted: string[] = []
+  records: Pick<ParkingRecord, "date" | "all_day_cnt" | "2h_cnt" | "1h_cnt" | "30m_cnt">[],
+  allRoomDatesSorted: string[] = [],
+  options?: PresetupBundleOptions
 ): string[] {
   const eventOnly = getEventOnlyDatesSorted(rooms);
   const presetupDate = findPresetupDateYmd(rooms);
-  const includePresetup = hasPresetupCars(rooms, records);
+  const includePresetup = shouldBundlePresetupWithEvent(rooms, records, options);
 
   if (eventOnly.length > 0) {
     if (includePresetup && presetupDate) {
@@ -103,6 +140,18 @@ export function getUsageDatesSorted(
   return allRoomDatesSorted;
 }
 
+/** 대시보드 행사 카드 기간 표시용 일자 (주차 기록 없이 룸·종료일만으로 계산) */
+export function getProjectPeriodDatesForDisplay(
+  rooms: ProjectRoomDate[],
+  effectiveEndYmd: string,
+  todayYmd: string
+): string[] {
+  return getUsageDatesSorted(rooms, [], [], {
+    effectiveEndYmd,
+    todayYmd,
+  });
+}
+
 export function getEventOnlyDatesSorted(rooms: ProjectRoomDate[]): string[] {
   const set = new Set<string>();
   for (const r of rooms) {
@@ -113,17 +162,46 @@ export function getEventOnlyDatesSorted(rooms: ProjectRoomDate[]): string[] {
   return Array.from(set).sort();
 }
 
+/**
+ * 보관함·진행 중 분류용 행사 종료일.
+ * 사전세팅 일자는 제외하고, DB end_date와 본 행사 룸 마지막 일자 중 더 늦은 날을 씁니다.
+ */
+export function getProjectEffectiveEndYmd(
+  project: { end_date: string },
+  rooms: ProjectRoomDate[] = []
+): string {
+  const dbEnd = String(project.end_date).slice(0, 10);
+  const eventDates = getEventOnlyDatesSorted(rooms);
+  if (eventDates.length === 0) return dbEnd;
+  const lastEvent = eventDates[eventDates.length - 1]!;
+  return lastEvent > dbEnd ? lastEvent : dbEnd;
+}
+
+/** effectiveEndYmd가 오늘보다 이전이면 보관함 */
+export function isProjectArchivedByEndDate(effectiveEndYmd: string, todayYmd: string): boolean {
+  return String(effectiveEndYmd).slice(0, 10) < String(todayYmd).slice(0, 10);
+}
+
+/** 대시보드 대표 일자 — 사전세팅이 아닌 본 행사 첫날 */
+export function getPrimaryDashboardDateFromRooms(
+  rooms: ProjectRoomDate[],
+  fallbackYmd: string
+): string {
+  return getFirstEventStartYmdFromRooms(rooms) ?? String(fallbackYmd).slice(0, 10);
+}
+
 /** 사전세팅 일자에 등록 차량이 있으면 +1 반영한 사용 일수 문구 */
 export function buildUsageDaysBadgeText(
   rooms: ProjectRoomDate[],
-  records: Pick<ParkingRecord, "date">[],
+  records: Pick<ParkingRecord, "date" | "all_day_cnt" | "2h_cnt" | "1h_cnt" | "30m_cnt">[],
   allRoomDatesSorted: string[] = [],
-  fallbackEventDayCount?: number
+  fallbackEventDayCount?: number,
+  options?: PresetupBundleOptions
 ): string {
-  const usageDates = getUsageDatesSorted(rooms, records, allRoomDatesSorted);
+  const usageDates = getUsageDatesSorted(rooms, records, allRoomDatesSorted, options);
   const n =
     usageDates.length > 0 ? usageDates.length : Math.max(0, fallbackEventDayCount ?? 0);
-  if (hasPresetupCars(rooms, records)) {
+  if (shouldBundlePresetupWithEvent(rooms, records, options)) {
     return `${n}일 사용 (사전세팅 1일 포함)`;
   }
   return n > 0 ? `${n}일 사용` : "0일 사용";

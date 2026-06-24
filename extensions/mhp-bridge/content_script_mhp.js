@@ -861,6 +861,18 @@
     return { counts, cards: outCards };
   }
 
+  function readMhpKnownDiscountCounts() {
+    const state = readMhpActiveDiscountStateFromDom();
+    const counts = state?.counts;
+    if (!counts) return null;
+    return {
+      all_day_cnt: Number(counts.all_day_cnt) || 0,
+      "2h_cnt": Number(counts["2h_cnt"]) || 0,
+      "1h_cnt": Number(counts["1h_cnt"]) || 0,
+      "30m_cnt": Number(counts["30m_cnt"]) || 0,
+    };
+  }
+
   /** innerText 슬라이스 기반 (DOM 실패 시 보조) */
   function readMhpActiveDiscountSummaryFromText() {
     const raw = (document.body?.innerText || "").replace(/\r/g, "");
@@ -1253,6 +1265,7 @@
       error: error || "",
       detail: detail || "",
       diff: diff || null,
+      actualCounts: readMhpKnownDiscountCounts(),
     });
   }
 
@@ -1264,6 +1277,7 @@
       ok: !!ok,
       error: error || "",
       detail: detail || "",
+      actualCounts: readMhpKnownDiscountCounts(),
     });
   }
 

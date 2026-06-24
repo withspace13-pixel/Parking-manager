@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Calculator, Home, Plus, Trash2 } from "lucide-react";
 import { MhpStoreCreditBadge } from "@/components/MhpStoreCreditBadge";
+import { MhpExtensionStatusBadge } from "@/components/MhpExtensionStatusBadge";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
@@ -37,7 +38,9 @@ import {
   postMhpSyncRequest,
   splitMhpParkingDisplayText,
 } from "@/lib/mhp-extension";
+import { formatMhpBridgeAlert } from "@/lib/mhp-bridge-errors";
 import { useMhpStoreCredit } from "@/lib/use-mhp-store-credit";
+import { useMhpExtensionStatus } from "@/lib/use-mhp-extension-status";
 
 function fallbackPeriodFromProject(p: Project): string {
   const s = String(p.start_date).slice(0, 10);
@@ -69,9 +72,13 @@ type RowState = {
   mhp_parking_duration?: string;
   /** MHP에 이미 적용된(취소 아님) 할인 요약 — 중복 등록 안내 */
   mhp_applied_discounts_summary?: string;
+  /** 앱 수량과 실제 MHP 수량이 다를 때 표시 */
+  mhp_sync_warning?: string;
 };
 
 const TICKET_KEYS = ["all_day_cnt", "2h_cnt", "1h_cnt", "30m_cnt"] as const;
+type TicketKey = (typeof TICKET_KEYS)[number];
+type TicketCounts = Record<TicketKey, number>;
 const TICKET_LABELS: Record<string, string> = {
   all_day_cnt: "종일",
   "2h_cnt": "2h",
@@ -98,6 +105,23 @@ function padRowsToMinEmpty(list: RowState[], date: string): RowState[] {
   return [...list, ...emptyParkingRows(date).slice(0, DEFAULT_EMPTY_ROW_COUNT - list.length)];
 }
 
+function getTicketCounts(row: Pick<RowState, TicketKey>): TicketCounts {
+  return {
+    all_day_cnt: row.all_day_cnt ?? 0,
+    "2h_cnt": row["2h_cnt"] ?? 0,
+    "1h_cnt": row["1h_cnt"] ?? 0,
+    "30m_cnt": row["30m_cnt"] ?? 0,
+  };
+}
+
+function formatTicketCounts(counts: TicketCounts): string {
+  return TICKET_KEYS.map((key) => `${TICKET_LABELS[key]} ${counts[key] ?? 0}매`).join(", ");
+}
+
+function buildMhpSyncWarning(expected: TicketCounts, actual: TicketCounts): string {
+  return `앱 수량(${formatTicketCounts(expected)})과 MHP 실제 수량(${formatTicketCounts(actual)})이 다릅니다.`;
+}
+
 export default function ParkingPageClient() {
   const params = useParams();
   const router = useRouter();
@@ -122,6 +146,42 @@ export default function ParkingPageClient() {
   const [mhpLoadingIndex, setMhpLoadingIndex] = useState<number | null>(null);
   const [mhpApplyLoadingIndex, setMhpApplyLoadingIndex] = useState<number | null>(null);
   const mhpStoreCredit = useMhpStoreCredit();
+  const mhpExtensionStatus = useMhpExtensionStatus();
+
+  const focusFirstTicketInput = useCallback((index: number) => {
+    window.setTimeout(() => {
+      ticketRefs.current[index]?.[0]?.focus();
+    }, 0);
+  }, []);
+
+  const focusNextVehicleInput = useCallback(
+    (index: number) => {
+      const nextIndex = index + 1;
+      setRows((prev) => {
+        if (nextIndex < prev.length) {
+          window.setTimeout(() => {
+            vehicleRefs.current[nextIndex]?.focus();
+          }, 0);
+          return prev;
+        }
+        window.setTimeout(() => {
+          vehicleRefs.current[nextIndex]?.focus();
+        }, 0);
+        return [
+          ...prev,
+          {
+            vehicle_num: "",
+            date: selectedDate,
+            all_day_cnt: 0,
+            "2h_cnt": 0,
+            "1h_cnt": 0,
+            "30m_cnt": 0,
+          },
+        ];
+      });
+    },
+    [selectedDate]
+  );
 
   useEffect(() => {
     if (!dateList.length) {
@@ -352,6 +412,51 @@ export default function ParkingPageClient() {
     [projectId, devStore]
   );
 
+  const saveRow = useCallback(
+    (row: RowState, index: number) => {
+      const vehicle = String(row.vehicle_num).trim().slice(0, 4);
+      if (!vehicle) return;
+      if (isDevMode()) {
+        const saved = devStore.upsertParkingRecord({
+          id: row.recordId,
+          project_id: projectId,
+          vehicle_num: vehicle,
+          date: row.date,
+          all_day_cnt: row.all_day_cnt,
+          "2h_cnt": row["2h_cnt"],
+          "1h_cnt": row["1h_cnt"],
+          "30m_cnt": row["30m_cnt"],
+        });
+        setRows((prev) =>
+          prev.map((r, i) => (i === index ? { ...r, recordId: saved.id } : r))
+        );
+        return;
+      }
+      void (async () => {
+        const payload = {
+          project_id: projectId,
+          vehicle_num: vehicle,
+          date: row.date,
+          all_day_cnt: row.all_day_cnt,
+          "2h_cnt": row["2h_cnt"],
+          "1h_cnt": row["1h_cnt"],
+          "30m_cnt": row["30m_cnt"],
+          updated_at: new Date().toISOString(),
+        };
+        const query = row.recordId
+          ? supabase.from("parking_records").update(payload).eq("id", row.recordId).select("id").single()
+          : supabase.from("parking_records").insert(payload).select("id").single();
+        const { data, error } = await query;
+        if (!error && data) {
+          setRows((prev) =>
+            prev.map((r, i) => (i === index ? { ...r, recordId: data.id } : r))
+          );
+        }
+      })();
+    },
+    [projectId, devStore]
+  );
+
   useEffect(() => {
     if (selectedDate) loadRecords(selectedDate);
   }, [selectedDate, loadRecords]);
@@ -375,28 +480,30 @@ export default function ParkingPageClient() {
         const { entryAt, duration } = splitMhpParkingDisplayText(text);
         const summary = (e.data.appliedDiscountsSummary ?? "").trim();
         const counts = e.data.appliedDiscountCounts ?? null;
+        let savedRow: RowState | null = null;
         setRows((prev) => {
           const row = prev[rowIndex];
           if (!row || !rowVehicleOk(row.vehicle_num)) return prev;
-          return prev.map((r, i) =>
-            i === rowIndex
+          const nextRow: RowState = {
+            ...row,
+            mhp_entry_at: entryAt,
+            mhp_parking_duration: duration,
+            mhp_applied_discounts_summary: summary || undefined,
+            mhp_sync_warning: undefined,
+            ...(counts
               ? {
-                  ...r,
-                  mhp_entry_at: entryAt,
-                  mhp_parking_duration: duration,
-                  mhp_applied_discounts_summary: summary || undefined,
-                  ...(counts
-                    ? {
-                        all_day_cnt: counts.all_day_cnt ?? r.all_day_cnt,
-                        "2h_cnt": counts["2h_cnt"] ?? r["2h_cnt"],
-                        "1h_cnt": counts["1h_cnt"] ?? r["1h_cnt"],
-                        "30m_cnt": counts["30m_cnt"] ?? r["30m_cnt"],
-                      }
-                    : null),
+                  all_day_cnt: counts.all_day_cnt ?? row.all_day_cnt,
+                  "2h_cnt": counts["2h_cnt"] ?? row["2h_cnt"],
+                  "1h_cnt": counts["1h_cnt"] ?? row["1h_cnt"],
+                  "30m_cnt": counts["30m_cnt"] ?? row["30m_cnt"],
                 }
-              : r
-          );
+              : {}),
+          };
+          savedRow = nextRow;
+          return prev.map((r, i) => (i === rowIndex ? nextRow : r));
         });
+        if (savedRow) saveRow(savedRow, rowIndex);
+        focusFirstTicketInput(rowIndex);
         if (summary) alert(`이미 등록된 할인 내역이 있어요.\n${summary}\n\n원하시면 표 수량을 바꾼 뒤 “등록”을 누르면 MHP에 맞게 동기화됩니다.`);
       } else {
         setRows((prev) => {
@@ -409,16 +516,17 @@ export default function ParkingPageClient() {
                   mhp_entry_at: undefined,
                   mhp_parking_duration: undefined,
                   mhp_applied_discounts_summary: undefined,
+                  mhp_sync_warning: undefined,
                 }
               : r
           );
         });
-        alert(e.data.error?.trim() || "MHP 조회에 실패했습니다.");
+        alert(formatMhpBridgeAlert(e.data.error?.trim() || "MHP 조회에 실패했습니다."));
       }
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
-  }, []);
+  }, [focusFirstTicketInput, saveRow]);
 
   useEffect(() => {
     const onApplyMsg = (e: MessageEvent) => {
@@ -430,27 +538,64 @@ export default function ParkingPageClient() {
       const pending = mhpApplyPendingRef.current;
       if (!pending || e.data.requestId !== pending.requestId) return;
       const kind = pending.kind;
+      const currentRow = rows[pending.index];
+      const expectedCounts =
+        kind === "cancel_all"
+          ? { all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0 }
+          : currentRow
+            ? getTicketCounts(currentRow)
+            : { all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0 };
+      const actualCounts =
+        "actualCounts" in e.data && e.data.actualCounts
+          ? {
+              all_day_cnt: Number(e.data.actualCounts.all_day_cnt) || 0,
+              "2h_cnt": Number(e.data.actualCounts["2h_cnt"]) || 0,
+              "1h_cnt": Number(e.data.actualCounts["1h_cnt"]) || 0,
+              "30m_cnt": Number(e.data.actualCounts["30m_cnt"]) || 0,
+            }
+          : null;
       mhpApplyPendingRef.current = null;
       setMhpApplyLoadingIndex(null);
       if (e.data.ok) {
-        alert((e.data.detail || (kind === "cancel_all" ? "할인 내역을 취소했어요." : "MHP와 수량을 맞췄어요.")).trim());
-        if (kind === "cancel_all") {
-          setRows((prev) =>
-            prev.map((r, i) =>
-              i === pending.index
-                ? { ...r, all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0, mhp_applied_discounts_summary: undefined }
-                : r
-            )
-          );
-        }
+        const warning =
+          actualCounts &&
+          TICKET_KEYS.some((key) => expectedCounts[key] !== actualCounts[key])
+            ? buildMhpSyncWarning(expectedCounts, actualCounts)
+            : undefined;
+        let savedRow: RowState | null = null;
+        setRows((prev) => {
+          const row = prev[pending.index];
+          if (!row) return prev;
+          const persistedCounts =
+            kind === "cancel_all"
+              ? { all_day_cnt: 0, "2h_cnt": 0, "1h_cnt": 0, "30m_cnt": 0 }
+              : actualCounts ?? getTicketCounts(row);
+          const nextRow: RowState = {
+            ...row,
+            ...persistedCounts,
+            ...(kind === "cancel_all" ? { mhp_applied_discounts_summary: undefined } : null),
+            mhp_sync_warning: warning,
+          };
+          savedRow = nextRow;
+          return prev.map((r, i) => (i === pending.index ? nextRow : r));
+        });
+        if (savedRow) saveRow(savedRow, pending.index);
+        const successText = (e.data.detail || (kind === "cancel_all" ? "할인 내역을 취소했어요." : "MHP와 수량을 맞췄어요.")).trim();
+        alert(warning ? `${successText}\n\n경고: ${warning}` : successText);
         mhpStoreCredit.refresh();
+        focusNextVehicleInput(pending.index);
       } else {
-        alert(e.data.error?.trim() || (kind === "cancel_all" ? "취소에 실패했어요. MHP 콘솔을 확인해 주세요." : "동기화에 실패했어요. MHP 콘솔을 확인해 주세요."));
+        alert(
+          formatMhpBridgeAlert(
+            e.data.error?.trim() ||
+              (kind === "cancel_all" ? "취소에 실패했어요. MHP 콘솔을 확인해 주세요." : "동기화에 실패했어요. MHP 콘솔을 확인해 주세요.")
+          )
+        );
       }
     };
     window.addEventListener("message", onApplyMsg);
     return () => window.removeEventListener("message", onApplyMsg);
-  }, [mhpStoreCredit.refresh]);
+  }, [focusNextVehicleInput, mhpStoreCredit.refresh, rows, saveRow]);
 
   const requestMhpSync = useCallback(
     (index: number) => {
@@ -485,7 +630,7 @@ export default function ParkingPageClient() {
         if (mhpApplyPendingRef.current?.requestId !== requestId) return;
         mhpApplyPendingRef.current = null;
         setMhpApplyLoadingIndex((cur) => (cur === index ? null : cur));
-        alert("응답이 없습니다. 확장 프로그램과 MHP 탭을 확인하세요.");
+        alert(formatMhpBridgeAlert("응답이 없습니다. 확장 프로그램과 MHP 탭을 확인하세요."));
       }, syncTimeoutMs);
     },
     [rows]
@@ -514,7 +659,7 @@ export default function ParkingPageClient() {
         if (mhpApplyPendingRef.current?.requestId !== requestId) return;
         mhpApplyPendingRef.current = null;
         setMhpApplyLoadingIndex((cur) => (cur === index ? null : cur));
-        alert("응답이 없습니다. 확장 프로그램과 MHP 탭을 확인하세요.");
+        alert(formatMhpBridgeAlert("응답이 없습니다. 확장 프로그램과 MHP 탭을 확인하세요."));
       }, 45000);
     },
     [rows]
@@ -540,6 +685,7 @@ export default function ParkingPageClient() {
                 mhp_entry_at: undefined,
                 mhp_parking_duration: undefined,
                 mhp_applied_discounts_summary: undefined,
+                mhp_sync_warning: undefined,
               }
             : r
         )
@@ -551,55 +697,10 @@ export default function ParkingPageClient() {
         if (mhpPendingRef.current?.requestId !== requestId) return;
         mhpPendingRef.current = null;
         setMhpLoadingIndex((cur) => (cur === index ? null : cur));
-        alert("응답이 없습니다. 확장 프로그램 설치·새로고침과 MHP 콘솔 탭을 확인하세요.");
+        alert(formatMhpBridgeAlert("응답이 없습니다. 확장 프로그램 설치·새로고침과 MHP 콘솔 탭을 확인하세요."));
       }, 32000);
     },
     [rows]
-  );
-
-  const saveRow = useCallback(
-    (row: RowState, index: number) => {
-      const vehicle = String(row.vehicle_num).trim().slice(0, 4);
-      if (!vehicle) return;
-      if (isDevMode()) {
-        const saved = devStore.upsertParkingRecord({
-          id: row.recordId,
-          project_id: projectId,
-          vehicle_num: vehicle,
-          date: row.date,
-          all_day_cnt: row.all_day_cnt,
-          "2h_cnt": row["2h_cnt"],
-          "1h_cnt": row["1h_cnt"],
-          "30m_cnt": row["30m_cnt"],
-        });
-        setRows((prev) =>
-          prev.map((r, i) => (i === index ? { ...r, recordId: saved.id } : r))
-        );
-        return;
-      }
-      (async () => {
-        const payload = {
-          project_id: projectId,
-          vehicle_num: vehicle,
-          date: row.date,
-          all_day_cnt: row.all_day_cnt,
-          "2h_cnt": row["2h_cnt"],
-          "1h_cnt": row["1h_cnt"],
-          "30m_cnt": row["30m_cnt"],
-          updated_at: new Date().toISOString(),
-        };
-        const query = row.recordId
-          ? supabase.from("parking_records").update(payload).eq("id", row.recordId).select("id").single()
-          : supabase.from("parking_records").insert(payload).select("id").single();
-        const { data, error } = await query;
-        if (!error && data) {
-          setRows((prev) =>
-            prev.map((r, i) => (i === index ? { ...r, recordId: data.id } : r))
-          );
-        }
-      })();
-    },
-    [projectId, devStore]
   );
 
   const updateRow = useCallback(
@@ -609,8 +710,10 @@ export default function ParkingPageClient() {
         const r = { ...next[index] };
         if (field === "vehicle_num") {
           r.vehicle_num = String(value).replace(/\D/g, "").slice(0, 4);
+          r.mhp_sync_warning = undefined;
         } else if (field === "all_day_cnt" || field === "2h_cnt" || field === "1h_cnt" || field === "30m_cnt") {
           r[field] = Math.max(0, parseInt(String(value), 10) || 0);
+          r.mhp_sync_warning = undefined;
         } else if (field === "date") {
           r.date = String(value);
         }
@@ -745,12 +848,20 @@ export default function ParkingPageClient() {
               </button>
               <h1 className="text-xl font-semibold text-[var(--text)]">주차권 등록</h1>
             </div>
-            <MhpStoreCreditBadge
-              display={mhpStoreCredit.display}
-              error={mhpStoreCredit.error}
-              loading={mhpStoreCredit.loading}
-              onRefresh={mhpStoreCredit.refresh}
-            />
+            <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+              <MhpExtensionStatusBadge
+                status={mhpExtensionStatus.status}
+                onRefresh={mhpExtensionStatus.refresh}
+                missingHint={mhpExtensionStatus.missingHint}
+                outdatedHint={mhpExtensionStatus.outdatedHint}
+              />
+              <MhpStoreCreditBadge
+                display={mhpStoreCredit.display}
+                error={mhpStoreCredit.error}
+                loading={mhpStoreCredit.loading}
+                onRefresh={mhpStoreCredit.refresh}
+              />
+            </div>
           </div>
         </div>
       </header>
@@ -904,7 +1015,7 @@ export default function ParkingPageClient() {
         <p className="mb-4 text-xs text-[var(--text-muted)]">
           방향키로 상하좌우 이동. Tab은 다음칸으로 이동하며, Enter는 새 행을 만든 뒤 그 행으로 이동합니다.{" "}
           <span className="font-medium text-[var(--text)]">조회</span>는 MHP에 4자리 조회,{" "}
-          <span className="font-medium text-[var(--text)]">등록</span>은 입력한 종류·수량만큼 MHP에서 순서대로 할인 적용합니다.
+          <span className="font-medium text-[var(--text)]">등록</span>은 입력한 종류·수량만큼 MHP에서 순서대로 할인 적용합니다. 조회가 성공하면 첫 수량 칸으로 이동하고, 등록/취소가 끝나면 다음 차량 칸으로 이동합니다.
         </p>
 
         <div className="card card-hover overflow-x-auto p-8">
@@ -1060,6 +1171,21 @@ export default function ParkingPageClient() {
                     >
                       <span className="font-semibold">이미 주차권 등록된 내역이 있습니다.</span>{" "}
                       <span className="opacity-90">{row.mhp_applied_discounts_summary}</span>
+                    </td>
+                  </tr>
+                ) : null}
+                {row.mhp_sync_warning ? (
+                  <tr className="table-row-hover">
+                    <td
+                      colSpan={
+                        4 +
+                        TICKET_KEYS.length +
+                        4
+                      }
+                      className="border-t border-red-200/80 bg-red-50/90 px-3 py-2 text-xs leading-relaxed text-red-900"
+                    >
+                      <span className="font-semibold">MHP 수량 확인 필요.</span>{" "}
+                      <span className="opacity-90">{row.mhp_sync_warning}</span>
                     </td>
                   </tr>
                 ) : null}
