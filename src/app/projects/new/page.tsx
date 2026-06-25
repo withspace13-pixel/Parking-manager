@@ -207,7 +207,14 @@ export default function NewProjectPage() {
     e?.preventDefault?.();
     setError("");
     const name = String(org_name ?? "").trim();
-    const mgr = String(manager ?? "").trim();
+    const mgr = (() => {
+      const form = e?.currentTarget;
+      if (form instanceof HTMLFormElement) {
+        const fromDom = String(new FormData(form).get("manager") ?? "").trim();
+        if (fromDom) return fromDom;
+      }
+      return String(manager ?? "").trim();
+    })();
     const eventName = String(event_name ?? "").trim();
     if (!name || !mgr) {
       setError("기관명과 담당자 정보(이름)를 입력해 주세요.");

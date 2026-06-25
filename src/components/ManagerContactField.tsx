@@ -28,20 +28,26 @@ export function ManagerContactField({
   onManagerPhoneChange,
   disabled,
 }: Props) {
+  const [draft, setDraft] = useState(manager);
   const [open, setOpen] = useState(false);
   const [hl, setHl] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const phoneTouchedRef = useRef(false);
+  const isComposingRef = useRef(false);
 
   const filtered = useMemo(
-    () => filterManagerContactSuggestions(contacts, manager, orgName),
-    [contacts, manager, orgName]
+    () => filterManagerContactSuggestions(contacts, draft, orgName),
+    [contacts, draft, orgName]
   );
 
   useEffect(() => {
+    if (!isComposingRef.current) setDraft(manager);
+  }, [manager]);
+
+  useEffect(() => {
     setHl(0);
-  }, [manager, filtered.length]);
+  }, [draft, filtered.length]);
 
   useEffect(() => {
     const el = listRef.current?.querySelector(`[data-contact-option-index="${hl}"]`);
@@ -56,14 +62,21 @@ export function ManagerContactField({
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
+  const commitManager = (value: string) => {
+    const next = value;
+    setDraft(next);
+    onManagerChange(next);
+  };
+
   useEffect(() => {
-    if (!manager.trim() || phoneTouchedRef.current || managerPhone.trim()) return;
-    const found = lookupManagerPhone(contacts, manager, orgName);
+    if (isComposingRef.current) return;
+    if (!draft.trim() || phoneTouchedRef.current || managerPhone.trim()) return;
+    const found = lookupManagerPhone(contacts, draft, orgName);
     if (found) onManagerPhoneChange(found);
-  }, [manager, orgName, contacts, managerPhone, onManagerPhoneChange]);
+  }, [draft, orgName, contacts, managerPhone, onManagerPhoneChange]);
 
   const pick = (contact: ManagerContact) => {
-    onManagerChange(contact.name);
+    commitManager(contact.name);
     onManagerPhoneChange(contact.phone);
     phoneTouchedRef.current = false;
     setOpen(false);
@@ -74,11 +87,28 @@ export function ManagerContactField({
       <div className="relative w-full">
         <input
           type="text"
-          value={manager}
+          value={draft}
           disabled={disabled}
           onChange={(e) => {
-            onManagerChange(e.target.value);
+            const next = e.target.value;
+            setDraft(next);
+            if (!isComposingRef.current) {
+              onManagerChange(next);
+              setOpen(true);
+            }
+          }}
+          onCompositionStart={() => {
+            isComposingRef.current = true;
+          }}
+          onCompositionEnd={(e) => {
+            isComposingRef.current = false;
+            commitManager(e.currentTarget.value);
             setOpen(true);
+          }}
+          onBlur={(e) => {
+            isComposingRef.current = false;
+            commitManager(e.currentTarget.value);
+            setOpen(false);
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={(e) => {
@@ -107,15 +137,18 @@ export function ManagerContactField({
               return;
             }
             if (e.key === "Enter") {
+              if (isComposingRef.current || e.nativeEvent.isComposing) return;
               e.preventDefault();
               const sel = filtered[hl] ?? filtered[0];
               if (sel) pick(sel);
+              return;
             }
             if (e.key === "Tab") setOpen(false);
           }}
           className="input w-full px-3 py-2.5 text-[var(--text)] placeholder:text-[var(--text-muted)]"
           placeholder="예: 홍길동"
           autoComplete="off"
+          name="manager"
           aria-autocomplete="list"
           aria-expanded={open && filtered.length > 0}
         />
