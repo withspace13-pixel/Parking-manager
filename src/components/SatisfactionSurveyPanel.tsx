@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, Send } from "lucide-react";
 import type { Project } from "@/lib/supabase";
 import { formatManagerPhoneDisplay, sanitizeManagerPhoneDigits } from "@/lib/manager-display";
+import { MessageTemplateControls } from "@/components/MessageTemplateControls";
 import {
   currentYearMonth,
   deriveSurveyTemplateFromMessage,
@@ -357,6 +358,36 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     showFeedback("기본 문구로 되돌렸습니다.");
   };
 
+  const getTemplateBodyForSave = useCallback(() => {
+    if (!selected) return "";
+    const params = buildParams(selected, yearMonth, displayOrg, displayManager);
+    if (isEditing && editDraft.trim()) {
+      return deriveSurveyTemplateFromMessage(editDraft, params);
+    }
+    if (bulkTemplate?.trim()) return bulkTemplate.trim();
+    return deriveSurveyTemplateFromMessage(previewBody, params);
+  }, [
+    selected,
+    yearMonth,
+    displayOrg,
+    displayManager,
+    isEditing,
+    editDraft,
+    bulkTemplate,
+    previewBody,
+  ]);
+
+  const handleApplySavedTemplate = (body: string) => {
+    const nextBulk = { ...bulkTemplates, [yearMonth]: body };
+    setBulkTemplates(nextBulk);
+    saveBulkTemplates(nextBulk);
+    const nextIndividual = { ...individualMessages };
+    delete nextIndividual[yearMonth];
+    setIndividualMessages(nextIndividual);
+    saveIndividualMessages(nextIndividual);
+    setIsEditing(false);
+  };
+
   const handleSend = async (recipient: SurveyRecipient) => {
     if (recipient.sendStatus !== "pending") return;
     const org = orgOverrides[recipient.id] ?? recipient.displayOrgName;
@@ -680,6 +711,12 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
                 <p className="text-sm text-[var(--text-muted)]">담당자를 선택하세요.</p>
               ) : (
                 <>
+                  <MessageTemplateControls
+                    campaign="survey"
+                    getTemplateBody={getTemplateBodyForSave}
+                    onApplyTemplate={handleApplySavedTemplate}
+                    onFeedback={showFeedback}
+                  />
                   <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block text-xs font-medium text-[var(--text-muted)]">
                       대표 기관명 (발송 전 수정)

@@ -138,9 +138,13 @@ export function ManagerContactField({
             }
             if (e.key === "Enter") {
               if (isComposingRef.current || e.nativeEvent.isComposing) return;
-              e.preventDefault();
-              const sel = filtered[hl] ?? filtered[0];
-              if (sel) pick(sel);
+              if (open && filtered.length > 0) {
+                e.preventDefault();
+                const sel = filtered[hl] ?? filtered[0];
+                if (sel) pick(sel);
+              } else {
+                e.preventDefault();
+              }
               return;
             }
             if (e.key === "Tab") setOpen(false);

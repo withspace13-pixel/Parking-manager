@@ -356,6 +356,14 @@ export default function NewProjectPage() {
 
         <form
           className="space-y-8"
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            const target = e.target;
+            if (!(target instanceof HTMLElement)) return;
+            if (target.tagName === "TEXTAREA") return;
+            if (target instanceof HTMLButtonElement && target.type === "submit") return;
+            e.preventDefault();
+          }}
           onSubmit={(e) => {
             e.preventDefault();
             e.stopPropagation();
