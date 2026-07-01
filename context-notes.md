@@ -1,10 +1,15 @@
-이번 작업 목표는 `src/app/projects/[id]/parking/ParkingPageClient.tsx`의 반복 등록 흐름을 더 빠르게 만들고, MHP와 앱 수량이 어긋날 때 바로 드러나게 하는 것입니다.
+# 솔라피 연동 — context notes
 
-- 현재 화면은 조회 버튼과 등록 버튼은 마우스 중심이고, 조회 성공 뒤 포커스 이동과 등록 성공 뒤 다음 차량 이동이 자동화되어 있지 않습니다.
-- MHP 조회 응답은 현재 수량을 내려주지만, 등록/전체 취소 응답은 성공 여부만 내려줘서 "등록은 됐는데 MHP는 1매" 같은 어긋남을 즉시 검출하기 어렵습니다.
-- 이번 변경은 기존 구조를 유지하면서 응답에 실제 수량만 추가하고, 화면에서는 경고/포커스 이동만 보강하는 방향으로 최소 수정합니다.
-- 조회 성공 시 첫 수량 칸으로 포커스를 넘기고, 등록/전체 취소 성공 시 다음 차량 칸으로 이동하게 해 같은 날짜 여러 대 등록 반복 속도를 높였습니다.
-- MHP content script가 동기화/전체 취소 직후 실제 미사용 할인 수량을 다시 읽어 앱으로 보내도록 바꿨고, 화면에서는 앱 입력 수량과 다르면 경고 배너와 알림으로 바로 드러내도록 했습니다.
-- `npm run build`는 통과했습니다. 다만 `npm run lint`는 ESLint 초기 설정이 없는 프로젝트라 대화형 설정 프롬프트에서 멈췄습니다.
-- 조회·등록으로 화면 수량만 바뀌고 DB에는 예전 값이 남던 문제를 수정했습니다. MHP 조회로 수량이 바뀌거나 등록/취소가 성공하면 즉시 `parking_records`에 저장합니다.
-- MHP 확장 상태 배지는 페이지 로드 시 `MHP_PING_REQUEST`로 확장 응답 여부·버전을 확인합니다. 필요 버전은 `src/lib/mhp-extension-version.ts`의 `1.3.7`과 맞춥니다.
+## 결정
+- **발송 경로**: 브라우저 → Next.js API Route → Solapi SDK (API Key/Secret은 서버 env만)
+- **SMS/LMS**: 본문 길이에 따라 Solapi SDK가 자동 분기 (90바이트 기준은 UI `estimateMessageType`과 동일)
+- **발송 완료 상태**: 솔라피 상태코드 `4000`(발송 완료)일 때만 localStorage `sent`에 추가. 그 외는 미발송 유지.
+- **발송 완료 취소**: `sent` localStorage에서만 제거. 솔라피 발송 기록은 유지.
+- **발송 API**: 접수 직후 응답, 최종 상태는 클라이언트 `sms-pending-tracker`가 2초 간격 폴링 (탭·창 전환·다른 대시보드 탭 이동 후 복귀 시에도 localStorage 기반으로 재개).
+- **발송 기록 UI**: 담당자 목록 헤더 우측 버튼 → 모달 (`SmsSendLogModal`).
+- **더미 번호 차단 없음**: `01000000000` 등도 솔라피에 보내고 실제 상태코드로 판단.
+- **env**: `SOLAPI_API_KEY`, `SOLAPI_API_SECRET`, `SOLAPI_SENDER` (등록 발신번호, 숫자만)
+
+## 미설정 시
+- `/api/messages/status` → `configured: false`, UI에 안내 문구
+- 발송 API → 503 + 설정 안내 메시지

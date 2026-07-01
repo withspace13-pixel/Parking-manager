@@ -4,9 +4,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Trash2, X } from "lucide-react";
 import {
+  BUILTIN_MESSAGE_TEMPLATE_NAME,
   createMessageTemplate,
   deleteMessageTemplate,
+  ensureBuiltinMessageTemplates,
   getDefaultMessageTemplateBody,
+  isBuiltinMessageTemplateName,
   loadMessageTemplates,
   suggestNewTemplateName,
   updateMessageTemplate,
@@ -20,6 +23,8 @@ type Props = {
   getTemplateBody: () => string;
   onApplyTemplate: (body: string) => void;
   onFeedback: (message: string) => void;
+  /** 기본 템플릿 저장·수정 후 미리보기 갱신 */
+  onTemplatesChanged?: () => void;
   disabled?: boolean;
 };
 
@@ -28,6 +33,7 @@ export function MessageTemplateControls({
   getTemplateBody,
   onApplyTemplate,
   onFeedback,
+  onTemplatesChanged,
   disabled,
 }: Props) {
   const [templates, setTemplates] = useState<SavedMessageTemplate[]>([]);
@@ -39,7 +45,14 @@ export function MessageTemplateControls({
   const [editBody, setEditBody] = useState("");
 
   const reload = useCallback(() => {
-    setTemplates(loadMessageTemplates(campaign));
+    ensureBuiltinMessageTemplates(campaign);
+    const list = loadMessageTemplates(campaign);
+    setTemplates(list);
+    const builtin = list.find((t) => t.name === BUILTIN_MESSAGE_TEMPLATE_NAME[campaign]);
+    setSelectedId((prev) => {
+      if (prev && list.some((t) => t.id === prev)) return prev;
+      return builtin?.id ?? list[0]?.id ?? "";
+    });
   }, [campaign]);
 
   useEffect(() => {
@@ -63,10 +76,12 @@ export function MessageTemplateControls({
   const openManage = () => {
     reload();
     const list = loadMessageTemplates(campaign);
+    const builtin = list.find((t) => t.name === BUILTIN_MESSAGE_TEMPLATE_NAME[campaign]);
     if (list.length === 0) {
       resetFormForCreate();
     } else {
-      const initial = list.find((t) => t.id === selectedId) ?? list[0]!;
+      const initial =
+        list.find((t) => t.id === selectedId) ?? builtin ?? list[0]!;
       loadTemplateIntoForm(initial);
     }
     setManageOpen(true);
@@ -133,6 +148,7 @@ export function MessageTemplateControls({
       updateMessageTemplate(campaign, editTemplateId, { name: editName, body: editBody });
       reload();
       onFeedback("템플릿을 수정했습니다.");
+      onTemplatesChanged?.();
     } catch (err) {
       onFeedback(err instanceof Error ? err.message : "저장에 실패했습니다.");
     }
@@ -142,20 +158,34 @@ export function MessageTemplateControls({
     if (!editTemplateId) return;
     const tpl = templates.find((t) => t.id === editTemplateId);
     if (!tpl) return;
-    const ok = confirm(`「${tpl.name}」 템플릿을 삭제할까요?`);
-    if (!ok) return;
-    deleteMessageTemplate(campaign, tpl.id);
-    if (selectedId === tpl.id) setSelectedId("");
-    const next = loadMessageTemplates(campaign);
-    setTemplates(next);
-    if (next.length === 0) {
-      resetFormForCreate();
-      onFeedback("템플릿을 삭제했습니다.");
+    if (isBuiltinMessageTemplateName(campaign, tpl.name)) {
+      onFeedback(`「${tpl.name}」 기본 템플릿은 삭제할 수 없습니다.`);
       return;
     }
-    loadTemplateIntoForm(next[0]!);
-    onFeedback("템플릿을 삭제했습니다.");
+    const ok = confirm(`「${tpl.name}」 템플릿을 삭제할까요?`);
+    if (!ok) return;
+    try {
+      deleteMessageTemplate(campaign, tpl.id);
+      if (selectedId === tpl.id) setSelectedId("");
+      const next = loadMessageTemplates(campaign);
+      setTemplates(next);
+      if (next.length === 0) {
+        resetFormForCreate();
+        onFeedback("템플릿을 삭제했습니다.");
+        return;
+      }
+      loadTemplateIntoForm(next[0]!);
+      onFeedback("템플릿을 삭제했습니다.");
+    } catch (err) {
+      onFeedback(err instanceof Error ? err.message : "삭제에 실패했습니다.");
+    }
   };
+
+  const editingBuiltin =
+    editTemplateId !== null &&
+    templates.some(
+      (t) => t.id === editTemplateId && isBuiltinMessageTemplateName(campaign, t.name)
+    );
 
   const modalSelectValue = isCreating || !editTemplateId ? "__new__" : editTemplateId;
 
@@ -212,8 +242,12 @@ export function MessageTemplateControls({
           role="dialog"
           aria-modal="true"
           aria-labelledby="template-edit-title"
+          onClick={closeManage}
         >
-          <div className="card flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden">
+          <div
+            className="card flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
               <h3 id="template-edit-title" className="text-sm font-bold text-[var(--text)]">
                 문구 템플릿 수정
@@ -247,7 +281,8 @@ export function MessageTemplateControls({
                 type="text"
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
-                className="input w-full shrink-0 px-2 py-1.5 text-sm"
+                readOnly={editingBuiltin}
+                className="input w-full shrink-0 px-2 py-1.5 text-sm disabled:bg-[#F8FAFC]"
                 placeholder="템플릿 이름"
               />
               <textarea
@@ -271,7 +306,7 @@ export function MessageTemplateControls({
                 >
                   취소
                 </button>
-                {editTemplateId && (
+                {editTemplateId && !editingBuiltin && (
                   <button
                     type="button"
                     onClick={handleDelete}

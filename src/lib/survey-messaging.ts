@@ -1,6 +1,11 @@
 // 만족도 설문 대상 집계·문자 미리보기 (종료일 기준, 사전세팅 제외)
 import type { Project } from "@/lib/supabase";
 import { managerPhoneText } from "@/lib/manager-display";
+import {
+  buildManagerContactPhoneIndex,
+  resolveProjectManagerPhone,
+  type ManagerContact,
+} from "@/lib/manager-contacts";
 import { formatMonthDaySlash } from "@/lib/schedule-dates";
 
 export type SurveyRecipientSendStatus = "pending" | "sent" | "no_phone";
@@ -174,27 +179,35 @@ export function resolveSurveyMessageBody(
   options?: {
     individualBody?: string | null;
     bulkTemplate?: string | null;
+    /** 문구 템플릿의 기본 만족도조사 본문 */
+    defaultTemplate?: string | null;
   }
 ): string {
   if (options?.individualBody?.trim()) return options.individualBody.trim();
   if (options?.bulkTemplate?.trim()) {
     return renderSurveyMessageTemplate(options.bulkTemplate.trim(), params);
   }
-  return buildSatisfactionSurveyMessage(params);
+  const template = options?.defaultTemplate?.trim() || DEFAULT_SURVEY_MESSAGE_TEMPLATE;
+  return buildSatisfactionSurveyMessage(params, template);
 }
 
 /** 종료일(end_date)이 속한 월 기준으로 담당자별 묶기 */
 export function groupProjectsIntoSurveyRecipients(
   projects: Project[],
   yearMonth: string,
-  sentIds: Set<string> = new Set()
+  sentIds: Set<string> = new Set(),
+  managerContacts: ManagerContact[] = []
 ): SurveyRecipient[] {
   const filtered = projects.filter((p) => yearMonthFromYmd(String(p.end_date)) === yearMonth);
   const map = new Map<string, SurveyRecipient>();
+  const phoneIndex =
+    managerContacts.length > 0
+      ? buildManagerContactPhoneIndex(managerContacts)
+      : undefined;
 
   for (const p of filtered) {
     const id = getSurveyRecipientGroupKey(p);
-    const phone = managerPhoneText(p.manager_phone) || null;
+    const phone = resolveProjectManagerPhone(p, managerContacts, phoneIndex);
     const event: SurveyRecipientEvent = {
       projectId: p.id,
       eventName: String(p.event_name ?? "").trim() || p.org_name,

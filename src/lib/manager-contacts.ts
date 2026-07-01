@@ -1,6 +1,8 @@
 // 담당자 연락처 마스터 조회·저장 (기관 등록 시 자동완성)
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { managerPhoneText, sanitizeManagerPhoneDigits } from "@/lib/manager-display";
+import { contactMatchKey, type OrgAliases } from "@/lib/contact-import/org-name-rules";
+import orgAliases from "../../data/org-aliases.json";
 import type { Project } from "@/lib/supabase";
 
 export type ManagerContact = {
@@ -172,6 +174,57 @@ export async function upsertManagerContactRemote(
 }
 
 /** 등록 폼 자동완성·자동 입력용 연락처 검색 */
+export function buildManagerContactPhoneIndex(
+  contacts: ManagerContact[],
+  aliases: OrgAliases = orgAliases as OrgAliases
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const c of contacts) {
+    const phone = managerPhoneText(c.phone);
+    if (!phone) continue;
+    const key = contactMatchKey(c.name, c.org_name, aliases);
+    map.set(key, phone);
+  }
+  return map;
+}
+
+/** 행사에 번호가 없을 때 manager_contacts 마스터에서 조회 (기관명 별칭 매칭) */
+export function lookupPhoneForManagerOrg(
+  manager: string,
+  orgName: string,
+  contacts: ManagerContact[],
+  phoneIndex?: Map<string, string>
+): string | null {
+  const name = manager.trim();
+  const org = orgName.trim();
+  if (!name) return null;
+
+  const index = phoneIndex ?? buildManagerContactPhoneIndex(contacts);
+  if (org) {
+    const key = contactMatchKey(name, org, orgAliases as OrgAliases);
+    const fromKey = index.get(key);
+    if (fromKey) return fromKey;
+  }
+
+  return lookupManagerPhone(contacts, name, org);
+}
+
+/** 행사 레코드 — projects.manager_phone 우선, 없으면 마스터 연락처 */
+export function resolveProjectManagerPhone(
+  project: Pick<Project, "manager" | "org_name" | "manager_phone">,
+  contacts: ManagerContact[],
+  phoneIndex?: Map<string, string>
+): string | null {
+  const fromProject = managerPhoneText(project.manager_phone);
+  if (fromProject) return fromProject;
+  return lookupPhoneForManagerOrg(
+    String(project.manager ?? ""),
+    String(project.org_name ?? ""),
+    contacts,
+    phoneIndex
+  );
+}
+
 export function lookupManagerPhone(
   contacts: ManagerContact[],
   managerName: string,

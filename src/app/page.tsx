@@ -37,15 +37,18 @@ import {
 } from "@/lib/presetup";
 import { ManagerNameWithPhone } from "@/lib/manager-display";
 import { compareMainEventListByRoom } from "@/lib/main-event-room-sort";
+import { navigateToNewProject } from "@/lib/navigate";
 import { isArchivedProjectExpiredForPurge } from "@/lib/archive-retention";
 import { ParkingSection } from "@/components/ParkingSection";
 import { SatisfactionSurveyPanel } from "@/components/SatisfactionSurveyPanel";
 import { ThankYouSmsPanel } from "@/components/ThankYouSmsPanel";
 import { MhpStoreCreditBadge } from "@/components/MhpStoreCreditBadge";
 import { MhpExtensionStatusBadge } from "@/components/MhpExtensionStatusBadge";
+import { SolapiBalanceBadge } from "@/components/SolapiBalanceBadge";
 import { Badge } from "@/components/ui/Badge";
 import { useMhpStoreCredit } from "@/lib/use-mhp-store-credit";
 import { useMhpExtensionStatus } from "@/lib/use-mhp-extension-status";
+import { useSolapiBalance } from "@/lib/use-solapi-balance";
 import {
   cycleParkingSupport,
   parseParkingSupport,
@@ -116,6 +119,7 @@ export default function HomePage() {
   const projectPickerRef = useRef<HTMLDivElement | null>(null);
   const mhpStoreCredit = useMhpStoreCredit();
   const mhpExtensionStatus = useMhpExtensionStatus();
+  const solapiBalance = useSolapiBalance();
   /** roomByProjectId가 현재 selectedDate 기준으로 갱신되었을 때만 선택 해제(useEffect)를 적용 — 날짜 전환 직후 레이스 방지 */
   const lastRoomFetchForDateRef = useRef<string | null>(null);
   const roomByProjectIdCacheRef = useRef<Map<string, Record<string, string>>>(new Map());
@@ -516,7 +520,7 @@ export default function HomePage() {
                 <Badge variant="secondary">개발자 모드</Badge>
               )}
             </div>
-            <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <MhpExtensionStatusBadge
                 status={mhpExtensionStatus.status}
                 onRefresh={mhpExtensionStatus.refresh}
@@ -528,6 +532,13 @@ export default function HomePage() {
                 error={mhpStoreCredit.error}
                 loading={mhpStoreCredit.loading}
                 onRefresh={mhpStoreCredit.refresh}
+              />
+              <SolapiBalanceBadge
+                display={solapiBalance.display}
+                error={solapiBalance.error}
+                loading={solapiBalance.loading}
+                configured={solapiBalance.configured}
+                onRefresh={solapiBalance.refresh}
               />
             </div>
           </div>
@@ -588,13 +599,14 @@ export default function HomePage() {
               </button>
             </div>
           </div>
-          <Link
-            href="/projects/new"
+          <button
+            type="button"
+            onClick={navigateToNewProject}
             className="btn btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm"
           >
             <PlusCircle className="h-4 w-4" />
             기관 등록
-          </Link>
+          </button>
         </div>
 
         {dashboardTab === "survey" && <SatisfactionSurveyPanel projects={allProjects} />}
@@ -757,10 +769,14 @@ export default function HomePage() {
         ) : allProjects.length === 0 ? (
           <div className="card p-12 text-center">
             <p className="text-[var(--text-muted)]">등록된 기관이 없습니다.</p>
-            <Link href="/projects/new" className="btn btn-primary mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm">
+            <button
+              type="button"
+              onClick={navigateToNewProject}
+              className="btn btn-primary mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm"
+            >
               <PlusCircle className="h-4 w-4" />
               기관 등록
-            </Link>
+            </button>
           </div>
         ) : dashboardTab === "archive" && archivedProjects.length === 0 ? (
           <div className="card p-12 text-center">

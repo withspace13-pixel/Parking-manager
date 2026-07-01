@@ -1,8 +1,11 @@
-- [x] 현재 주차권 등록 화면과 MHP 확장 응답 구조 확인
-- [x] 조회 후 수량 입력으로 이어지는 반복 작업 흐름 개선
-- [x] 등록/취소 후 실제 MHP 수량 검증 및 경고 표시 추가
-- [x] 관련 타입/브리지 응답 필드 정리
+# 솔라피 문자 발송·상태 추적
+
+- [x] solapi SDK 설치
+- [x] 서버 발송 모듈 (`src/lib/solapi-server.ts`) — 발송 후 최대 45초 폴링
+- [x] API Route (`/api/messages/send`, `/api/messages/status`, `/api/messages/refresh`)
+- [x] 상태코드 분류 (`src/lib/solapi-status.ts`) — 4000만 발송 완료
+- [x] 발송 기록 localStorage (`src/lib/sms-send-log.ts`)
+- [x] 발송 기록 UI (`SmsSendLogPanel`)
+- [x] ThankYouSmsPanel / SatisfactionSurveyPanel — 실제 상태 반영, 발송 완료 취소
+- [x] `.env.local.example` 업데이트
 - [x] 빌드 확인
-- [ ] 린트 설정 없이 `next lint`가 대화형 초기화로 멈춤
-- [x] MHP 확장 핑·상태 배지(대시보드·주차권 등록)
-- [x] MHP 연동 실패 메시지 확장/MHP 탭/MHP 데이터 분류

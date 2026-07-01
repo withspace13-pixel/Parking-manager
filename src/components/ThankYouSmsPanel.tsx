@@ -2,10 +2,37 @@
 
 // 감사문자 수동 발송·미리보기 (종료일 일 단위)
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, Send } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, ClipboardList, PlusCircle, Send } from "lucide-react";
 import type { Project } from "@/lib/supabase";
+import { navigateToNewProject } from "@/lib/navigate";
+import { isDevMode } from "@/lib/dev-mode";
+import { supabase } from "@/lib/supabase";
+import {
+  fetchManagerContacts,
+  loadManagerContactsLocal,
+  mergeManagerContacts,
+  type ManagerContact,
+} from "@/lib/manager-contacts";
 import { formatManagerPhoneDisplay, sanitizeManagerPhoneDigits } from "@/lib/manager-display";
+import { fetchSolapiStatus, sendMessageViaApi } from "@/lib/send-message-client";
+import { appendSmsSendLog, buildSmsSendLogEntry } from "@/lib/sms-send-log";
+import {
+  describeSmsSendResult,
+  shouldMarkRecipientAsSent,
+} from "@/lib/recipient-sms-feedback";
 import { MessageTemplateControls } from "@/components/MessageTemplateControls";
+import {
+  ensureBuiltinMessageTemplates,
+  getBuiltinMessageTemplateBody,
+} from "@/lib/message-templates";
+import { SmsSendLogModal } from "@/components/SmsSendLogModal";
+import { useSmsPendingSync } from "@/hooks/useSmsPendingSync";
+import { ensureSmsPendingTracker, countCampaignSmsLogs } from "@/lib/sms-pending-tracker";
+import {
+  loadRecipientSentIds,
+  removeRecipientSentId,
+  saveRecipientSentIds,
+} from "@/lib/recipient-sent-storage";
 import { sortSurveyRecipientsByEventDate } from "@/lib/survey-messaging";
 import {
   defaultThankYouTargetDate,
@@ -38,33 +65,9 @@ function filterChipClass(active: boolean, base: string) {
     : `${base} hover:opacity-90`;
 }
 
-const SENT_STORAGE_KEY = "parking-manager-thankyou-sent-v1";
 const BULK_TEMPLATE_KEY = "parking-manager-thankyou-template-v1";
 const INDIVIDUAL_MESSAGE_KEY = "parking-manager-thankyou-individual-v1";
 const PHONE_OVERRIDE_KEY = "parking-manager-thankyou-phone-v1";
-
-function loadSentIds(targetDate: string): Set<string> {
-  if (typeof window === "undefined") return new Set();
-  try {
-    const raw = localStorage.getItem(SENT_STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw) as Record<string, string[]>;
-    return new Set(parsed[targetDate] ?? []);
-  } catch {
-    return new Set();
-  }
-}
-
-function saveSentIds(targetDate: string, ids: Set<string>) {
-  try {
-    const raw = localStorage.getItem(SENT_STORAGE_KEY);
-    const parsed = raw ? (JSON.parse(raw) as Record<string, string[]>) : {};
-    parsed[targetDate] = Array.from(ids);
-    localStorage.setItem(SENT_STORAGE_KEY, JSON.stringify(parsed));
-  } catch {
-    /* ignore */
-  }
-}
 
 function loadBulkTemplates(): Record<string, string> {
   if (typeof window === "undefined") return {};
@@ -156,9 +159,47 @@ export function ThankYouSmsPanel({ projects }: Props) {
   const [editDraft, setEditDraft] = useState("");
   const [applyFeedback, setApplyFeedback] = useState<string | null>(null);
   const [listFilter, setListFilter] = useState<RecipientListFilter>("all");
+  const [solapiConfigured, setSolapiConfigured] = useState<boolean | null>(null);
+  const [logVersion, setLogVersion] = useState(0);
+  const [logModalOpen, setLogModalOpen] = useState(false);
+  const [pendingRecipientIds, setPendingRecipientIds] = useState<Set<string>>(() => new Set());
+  const [managerContacts, setManagerContacts] = useState<ManagerContact[]>([]);
+  const [builtinTemplateBody, setBuiltinTemplateBody] = useState("");
+
+  const refreshBuiltinTemplate = useCallback(() => {
+    setBuiltinTemplateBody(getBuiltinMessageTemplateBody("thank_you"));
+  }, []);
 
   useEffect(() => {
-    setSentIds(loadSentIds(targetDate));
+    ensureBuiltinMessageTemplates("thank_you");
+    refreshBuiltinTemplate();
+  }, [refreshBuiltinTemplate]);
+
+  useSmsPendingSync({
+    campaign: "thank_you",
+    campaignKey: targetDate,
+    onSentIdsChange: setSentIds,
+    onPendingIdsChange: setPendingRecipientIds,
+    onLogChange: () => setLogVersion((v) => v + 1),
+  });
+
+  useEffect(() => {
+    void fetchSolapiStatus().then((s) => setSolapiConfigured(s.configured));
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      if (isDevMode()) {
+        setManagerContacts(loadManagerContactsLocal());
+        return;
+      }
+      const contacts = await fetchManagerContacts(supabase);
+      setManagerContacts(mergeManagerContacts(contacts, loadManagerContactsLocal()));
+    })();
+  }, []);
+
+  useEffect(() => {
+    setSentIds(loadRecipientSentIds("thank_you", targetDate));
     setBulkTemplates(loadBulkTemplates());
     setIndividualMessages(loadIndividualMessages());
     setPhoneOverrides(loadPhoneOverrides());
@@ -168,8 +209,8 @@ export function ThankYouSmsPanel({ projects }: Props) {
   }, [targetDate]);
 
   const recipients = useMemo(
-    () => groupProjectsIntoThankYouRecipients(projects, targetDate, sentIds),
-    [projects, targetDate, sentIds]
+    () => groupProjectsIntoThankYouRecipients(projects, targetDate, sentIds, managerContacts),
+    [projects, targetDate, sentIds, managerContacts]
   );
 
   const displayRecipients = useMemo(
@@ -230,9 +271,10 @@ export function ThankYouSmsPanel({ projects }: Props) {
       return resolveThankYouMessageBody(params, {
         individualBody: individual,
         bulkTemplate,
+        defaultTemplate: builtinTemplateBody,
       });
     },
-    [targetDate, individualMessages, bulkTemplates]
+    [targetDate, individualMessages, bulkTemplates, builtinTemplateBody]
   );
 
   const previewBody = useMemo(() => {
@@ -393,20 +435,70 @@ export function ThankYouSmsPanel({ projects }: Props) {
     const org = orgOverrides[recipient.id] ?? recipient.displayOrgName;
     const manager = managerOverrides[recipient.id] ?? recipient.manager;
     const preview = resolveBody(recipient, org, manager);
+    const phone = resolveRecipientPhone(recipient, phoneOverrides);
+    if (!phone) {
+      alert("연락처가 없어 발송할 수 없습니다.");
+      return;
+    }
+    if (solapiConfigured === false) {
+      alert(
+        "솔라피 API가 설정되지 않았습니다.\n.env.local에 SOLAPI_API_KEY, SOLAPI_API_SECRET, SOLAPI_SENDER를 추가한 뒤 개발 서버를 재시작해 주세요."
+      );
+      return;
+    }
+    const msgType = estimateMessageType(preview);
     const ok = confirm(
-      `${manager} 님에게 감사 문자를 발송할까요?\n\n(${estimateMessageType(preview)} · 솔라피 연동 전 미리보기)`
+      `${manager} 님(${formatManagerPhoneDisplay(phone)})에게 감사 문자를 발송할까요?\n\n(${msgType} · 솔라피 실발송)`
     );
     if (!ok) return;
     setSendingId(recipient.id);
     try {
-      await new Promise((r) => setTimeout(r, 400));
-      const next = new Set(sentIds);
-      next.add(recipient.id);
-      setSentIds(next);
-      saveSentIds(targetDate, next);
+      const result = await sendMessageViaApi({ to: phone, text: preview });
+      appendSmsSendLog(
+        buildSmsSendLogEntry({
+          campaign: "thank_you",
+          campaignKey: targetDate,
+          recipientId: recipient.id,
+          managerName: manager,
+          orgName: org,
+          to: phone,
+          messageId: result.messageId,
+          statusCode: result.statusCode,
+          statusMessage: result.statusMessage,
+        })
+      );
+      setLogVersion((v) => v + 1);
+      ensureSmsPendingTracker();
+
+      if (result.outcome === "pending") {
+        setPendingRecipientIds((prev) => new Set(prev).add(recipient.id));
+      }
+
+      if (shouldMarkRecipientAsSent(result)) {
+        const next = new Set(sentIds);
+        next.add(recipient.id);
+        setSentIds(next);
+        saveRecipientSentIds("thank_you", targetDate, next);
+      }
+
+      alert(describeSmsSendResult(result));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "문자 발송에 실패했습니다.");
     } finally {
       setSendingId(null);
     }
+  };
+
+  const handleUnsend = (recipientId: string) => {
+    if (!sentIds.has(recipientId)) return;
+    const ok = confirm(
+      "이 담당자를 발송 완료 목록에서 빼고 다시 미발송 상태로 되돌릴까요?\n(솔라피 발송 기록은 유지됩니다.)"
+    );
+    if (!ok) return;
+    const next = new Set(sentIds);
+    next.delete(recipientId);
+    setSentIds(next);
+    removeRecipientSentId("thank_you", targetDate, recipientId);
   };
 
   const toggleExpanded = (id: string) => {
@@ -429,6 +521,20 @@ export function ThankYouSmsPanel({ projects }: Props) {
 
   return (
     <div className="space-y-4">
+      {projects.length === 0 ? (
+        <div className="card p-12 text-center">
+          <p className="text-[var(--text-muted)]">등록된 기관이 없습니다.</p>
+          <button
+            type="button"
+            onClick={navigateToNewProject}
+            className="btn btn-primary mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm"
+          >
+            <PlusCircle className="h-4 w-4" />
+            기관 등록
+          </button>
+        </div>
+      ) : (
+        <>
       <div className="card flex flex-wrap items-end justify-between gap-4 p-5">
         <div>
           <h3 className="text-base font-bold text-[var(--text)]">감사문자 발송</h3>
@@ -494,6 +600,16 @@ export function ThankYouSmsPanel({ projects }: Props) {
         </div>
       </div>
 
+      {displayRecipients.length > 0 && (
+        <SmsSendLogModal
+          open={logModalOpen}
+          onClose={() => setLogModalOpen(false)}
+          campaign="thank_you"
+          campaignKey={targetDate}
+          logVersion={logVersion}
+        />
+      )}
+
       {displayRecipients.length === 0 ? (
         <div className="card p-12 text-center">
           <p className="text-[var(--text-muted)]">
@@ -503,13 +619,28 @@ export function ThankYouSmsPanel({ projects }: Props) {
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
           <div className="card overflow-hidden lg:col-span-3">
-            <div className="border-b border-[var(--border)] bg-[#F8FAFC] px-4 py-3">
-              <h4 className="text-sm font-bold text-[var(--text)]">담당자 목록</h4>
-              {listFilter !== "all" && (
-                <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                  필터 적용 중 · {filteredRecipients.length}명
-                </p>
-              )}
+            <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] bg-[#F8FAFC] px-4 py-3">
+              <div>
+                <h4 className="text-sm font-bold text-[var(--text)]">담당자 목록</h4>
+                {listFilter !== "all" && (
+                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                    필터 적용 중 · {filteredRecipients.length}명
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setLogModalOpen(true)}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-[#F8FAFC]"
+              >
+                <ClipboardList className="h-3.5 w-3.5" />
+                발송 기록
+                {countCampaignSmsLogs("thank_you", targetDate) > 0 && (
+                  <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
+                    {countCampaignSmsLogs("thank_you", targetDate)}
+                  </span>
+                )}
+              </button>
             </div>
             <ul className="max-h-[32rem] divide-y divide-[var(--border)] overflow-y-auto">
               {filteredRecipients.length === 0 ? (
@@ -614,7 +745,11 @@ export function ThankYouSmsPanel({ projects }: Props) {
                         </div>
                         <button
                           type="button"
-                          disabled={r.sendStatus !== "pending" || sendingId === r.id}
+                          disabled={
+                            r.sendStatus !== "pending" ||
+                            sendingId === r.id ||
+                            pendingRecipientIds.has(r.id)
+                          }
                           onClick={(e) => {
                             e.stopPropagation();
                             void handleSend(r);
@@ -622,7 +757,11 @@ export function ThankYouSmsPanel({ projects }: Props) {
                           className="btn btn-primary inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <Send className="h-3.5 w-3.5" />
-                          {sendingId === r.id ? "처리 중…" : isSent ? "발송됨" : "발송"}
+                          {sendingId === r.id || pendingRecipientIds.has(r.id)
+                            ? "발송 중…"
+                            : isSent
+                              ? "발송됨"
+                              : "발송"}
                         </button>
                       </div>
                     </li>
@@ -652,6 +791,15 @@ export function ThankYouSmsPanel({ projects }: Props) {
                 </div>
                 {selected && (
                   <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                    {sentIds.has(selected.id) && (
+                      <button
+                        type="button"
+                        onClick={() => handleUnsend(selected.id)}
+                        className="rounded-md border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-800 hover:bg-red-100"
+                      >
+                        발송 완료 취소
+                      </button>
+                    )}
                     {!isEditing ? (
                       <>
                         {bulkTemplate && (
@@ -716,6 +864,7 @@ export function ThankYouSmsPanel({ projects }: Props) {
                     getTemplateBody={getTemplateBodyForSave}
                     onApplyTemplate={handleApplySavedTemplate}
                     onFeedback={showFeedback}
+                    onTemplatesChanged={refreshBuiltinTemplate}
                   />
                   <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block text-xs font-medium text-[var(--text-muted)]">
@@ -772,9 +921,16 @@ export function ThankYouSmsPanel({ projects }: Props) {
                         <strong>개별 적용</strong>은 현재 담당자만, <strong>일괄 적용</strong>은 선택한 날짜
                         전체 담당자에게 같은 문구 틀을 적용합니다(담당자·일자·행사 목록은 자동 치환).
                       </>
+                    ) : solapiConfigured === false ? (
+                      <>
+                        솔라피 API가 설정되지 않았습니다. .env.local에 SOLAPI_API_KEY, SOLAPI_API_SECRET,
+                        SOLAPI_SENDER를 추가한 뒤 서버를 재시작해 주세요.
+                      </>
                     ) : (
                       <>
-                        솔라피 연동 전입니다. 발송 버튼은 UI 확인용으로 발송 완료 상태만 저장합니다.
+                        발송 버튼을 누르면 솔라피로 실제 문자가 발송됩니다. 처리 결과는
+                        백그라운드에서 자동 추적되며, 다른 탭·창으로 이동해도 계속 확인합니다.{" "}
+                        <strong>발송 완료(4000)</strong> 상태일 때만 목록에 발송됨으로 표시됩니다.
                       </>
                     )}
                   </p>
@@ -783,6 +939,8 @@ export function ThankYouSmsPanel({ projects }: Props) {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

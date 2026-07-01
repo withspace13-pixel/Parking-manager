@@ -12,14 +12,12 @@ type MhpStoreCreditBadgeProps = {
 
 export function MhpStoreCreditBadge({ display, error, loading, onRefresh }: MhpStoreCreditBadgeProps) {
   return (
-    <div className="flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-white px-3 py-2 shadow-sm sm:px-4 sm:py-2.5">
-      <Wallet className="h-5 w-5 shrink-0 text-[var(--text-muted)]" aria-hidden />
+    <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-white px-2.5 py-1.5 shadow-sm">
+      <Wallet className="h-4 w-4 shrink-0 text-[var(--text-muted)]" aria-hidden />
       <div className="min-w-0 text-right">
-        <p className="text-sm font-semibold tracking-tight text-[var(--text-muted)] sm:text-base">
-          MHP 스토어 크레딧
-        </p>
+        <p className="text-xs font-medium text-[var(--text-muted)]">MHP 스토어 크레딧</p>
         <p
-          className="text-base font-bold tabular-nums text-[var(--text)] sm:text-lg"
+          className="text-sm font-bold tabular-nums text-[var(--text)]"
           title={error && !display ? error : undefined}
         >
           {loading && !display ? "…" : (display ?? "—")}
@@ -29,11 +27,11 @@ export function MhpStoreCreditBadge({ display, error, loading, onRefresh }: MhpS
         type="button"
         onClick={() => onRefresh()}
         disabled={loading}
-        className="inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg)] hover:text-[var(--text)] disabled:cursor-wait disabled:opacity-50"
+        className="inline-flex shrink-0 items-center justify-center rounded-md border border-transparent p-1 text-[var(--text-muted)] hover:bg-[var(--bg)] hover:text-[var(--text)] disabled:cursor-wait disabled:opacity-50"
         title="크레딧 다시 읽기 (MHP 탭 열림 필요)"
         aria-label="스토어 크레딧 새로고침"
       >
-        <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+        <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
       </button>
     </div>
   );

@@ -3,6 +3,11 @@ import type { Project } from "@/lib/supabase";
 import { addDaysToYmd } from "@/lib/archive-retention";
 import { managerPhoneText } from "@/lib/manager-display";
 import {
+  buildManagerContactPhoneIndex,
+  resolveProjectManagerPhone,
+  type ManagerContact,
+} from "@/lib/manager-contacts";
+import {
   estimateMessageType,
   formatProjectEventDateLabel,
   formatSurveyEventLines,
@@ -93,28 +98,36 @@ export function resolveThankYouMessageBody(
   options?: {
     individualBody?: string | null;
     bulkTemplate?: string | null;
+    /** 문구 템플릿의 기본 감사문자 본문 */
+    defaultTemplate?: string | null;
   }
 ): string {
   if (options?.individualBody?.trim()) return options.individualBody.trim();
   if (options?.bulkTemplate?.trim()) {
     return renderThankYouMessageTemplate(options.bulkTemplate.trim(), params);
   }
-  return buildThankYouMessage(params);
+  const template = options?.defaultTemplate?.trim() || DEFAULT_THANK_YOU_MESSAGE_TEMPLATE;
+  return buildThankYouMessage(params, template);
 }
 
 /** 종료일(end_date)이 선택한 날짜인 행사 · 담당자별 묶기 */
 export function groupProjectsIntoThankYouRecipients(
   projects: Project[],
   targetDate: string,
-  sentIds: Set<string> = new Set()
+  sentIds: Set<string> = new Set(),
+  managerContacts: ManagerContact[] = []
 ): ThankYouRecipient[] {
   const day = String(targetDate).slice(0, 10);
   const filtered = projects.filter((p) => String(p.end_date).slice(0, 10) === day);
   const map = new Map<string, ThankYouRecipient>();
+  const phoneIndex =
+    managerContacts.length > 0
+      ? buildManagerContactPhoneIndex(managerContacts)
+      : undefined;
 
   for (const p of filtered) {
     const id = getSurveyRecipientGroupKey(p);
-    const phone = managerPhoneText(p.manager_phone) || null;
+    const phone = resolveProjectManagerPhone(p, managerContacts, phoneIndex);
     const event: ThankYouRecipientEvent = {
       projectId: p.id,
       eventName: String(p.event_name ?? "").trim() || p.org_name,
