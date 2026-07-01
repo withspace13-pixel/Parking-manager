@@ -12,7 +12,7 @@ const nunito = Nunito({
 });
 
 export const metadata: Metadata = {
-  title: "주차권 관리 및 자동 정산",
+  title: "주차권 정산 및 고객 관리",
   description: "기관/담당자별 주차권 관리",
 };
 

@@ -1,5 +1,5 @@
-// 감사문자·만족도 조사 솔라피 발송 기록 (localStorage)
-
+// 감사문자·만족도 조사 솔라피 발송 기록 (Supabase 공유)
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   classifySolapiStatusCode,
   formatSmsStatusLabel,
@@ -11,7 +11,6 @@ export type SmsCampaign = "survey" | "thank_you";
 export type SmsSendLogEntry = {
   id: string;
   campaign: SmsCampaign;
-  /** survey: YYYY-MM, thank_you: YYYY-MM-DD */
   campaignKey: string;
   recipientId: string;
   managerName: string;
@@ -25,14 +24,49 @@ export type SmsSendLogEntry = {
   sentAt: string;
 };
 
-const STORAGE_KEY = "parking-manager-sms-send-log-v1";
 const MAX_LOGS = 500;
+
+type SmsSendLogRow = {
+  id: string;
+  campaign: string;
+  campaign_key: string;
+  recipient_id: string;
+  manager_name: string;
+  org_name: string;
+  to_phone: string;
+  message_id: string | null;
+  status_code: string;
+  status_label: string;
+  status_message: string;
+  outcome: string;
+  sent_at: string;
+};
+
+let logCache: SmsSendLogEntry[] = [];
 
 function newId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
   }
   return `smslog-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function rowToEntry(row: SmsSendLogRow): SmsSendLogEntry {
+  return {
+    id: row.id,
+    campaign: row.campaign as SmsCampaign,
+    campaignKey: row.campaign_key,
+    recipientId: row.recipient_id,
+    managerName: row.manager_name,
+    orgName: row.org_name,
+    to: row.to_phone,
+    messageId: row.message_id ?? undefined,
+    statusCode: row.status_code,
+    statusLabel: row.status_label,
+    statusMessage: row.status_message,
+    outcome: row.outcome as SmsDeliveryOutcome,
+    sentAt: row.sent_at,
+  };
 }
 
 export function buildSmsSendLogEntry(params: {
@@ -67,43 +101,92 @@ export function buildSmsSendLogEntry(params: {
   };
 }
 
-export function loadSmsSendLogs(): SmsSendLogEntry[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as SmsSendLogEntry[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+export async function refreshSmsSendLogsCache(supabase: SupabaseClient): Promise<SmsSendLogEntry[]> {
+  const { data, error } = await supabase
+    .from("sms_send_logs")
+    .select(
+      "id, campaign, campaign_key, recipient_id, manager_name, org_name, to_phone, message_id, status_code, status_label, status_message, outcome, sent_at"
+    )
+    .order("sent_at", { ascending: false })
+    .limit(MAX_LOGS);
+
+  if (error) {
+    console.warn("[sms_send_logs fetch]", error.message);
+    return logCache;
   }
+
+  logCache = (data ?? []).map((row) => rowToEntry(row as SmsSendLogRow));
+  return logCache;
 }
 
-function persistSmsSendLogs(logs: SmsSendLogEntry[]) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(logs.slice(0, MAX_LOGS)));
-  } catch {
-    /* ignore */
+export function getSmsSendLogsCache(): SmsSendLogEntry[] {
+  return logCache;
+}
+
+export async function appendSmsSendLog(
+  supabase: SupabaseClient,
+  entry: SmsSendLogEntry
+): Promise<void> {
+  const { error } = await supabase.from("sms_send_logs").insert({
+    id: entry.id,
+    campaign: entry.campaign,
+    campaign_key: entry.campaignKey,
+    recipient_id: entry.recipientId,
+    manager_name: entry.managerName,
+    org_name: entry.orgName,
+    to_phone: entry.to,
+    message_id: entry.messageId ?? null,
+    status_code: entry.statusCode,
+    status_label: entry.statusLabel,
+    status_message: entry.statusMessage,
+    outcome: entry.outcome,
+    sent_at: entry.sentAt,
+  });
+
+  if (error) {
+    console.warn("[sms_send_logs append]", error.message);
+    return;
   }
+
+  logCache = [entry, ...logCache.filter((e) => e.id !== entry.id)].slice(0, MAX_LOGS);
 }
 
-export function appendSmsSendLog(entry: SmsSendLogEntry): void {
-  const next = [entry, ...loadSmsSendLogs()].slice(0, MAX_LOGS);
-  persistSmsSendLogs(next);
-}
-
-export function updateSmsSendLog(
+export async function updateSmsSendLog(
+  supabase: SupabaseClient,
   id: string,
   patch: Pick<SmsSendLogEntry, "statusCode" | "statusMessage" | "statusLabel" | "outcome">
-): SmsSendLogEntry | null {
-  const list = loadSmsSendLogs();
-  const idx = list.findIndex((e) => e.id === id);
-  if (idx < 0) return null;
-  const updated: SmsSendLogEntry = { ...list[idx]!, ...patch };
-  const next = [...list];
-  next[idx] = updated;
-  persistSmsSendLogs(next);
+): Promise<SmsSendLogEntry | null> {
+  const idx = logCache.findIndex((e) => e.id === id);
+  const prev = idx >= 0 ? logCache[idx]! : null;
+
+  const { data, error } = await supabase
+    .from("sms_send_logs")
+    .update({
+      status_code: patch.statusCode,
+      status_message: patch.statusMessage,
+      status_label: patch.statusLabel,
+      outcome: patch.outcome,
+    })
+    .eq("id", id)
+    .select(
+      "id, campaign, campaign_key, recipient_id, manager_name, org_name, to_phone, message_id, status_code, status_label, status_message, outcome, sent_at"
+    )
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[sms_send_logs update]", error.message);
+    return prev;
+  }
+  if (!data) return null;
+
+  const updated = rowToEntry(data as SmsSendLogRow);
+  if (idx >= 0) {
+    const next = [...logCache];
+    next[idx] = updated;
+    logCache = next;
+  } else {
+    logCache = [updated, ...logCache.filter((e) => e.id !== id)].slice(0, MAX_LOGS);
+  }
   return updated;
 }
 

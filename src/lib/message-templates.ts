@@ -1,4 +1,5 @@
-// 감사문자·만족도 조사 공통 문구 템플릿 저장소 (localStorage)
+// 감사문자·만족도 조사 문구 템플릿 (Supabase 공유)
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { DEFAULT_SURVEY_MESSAGE_TEMPLATE } from "@/lib/survey-messaging";
 import { DEFAULT_THANK_YOU_MESSAGE_TEMPLATE } from "@/lib/thank-you-messaging";
 
@@ -12,15 +13,9 @@ export type SavedMessageTemplate = {
   updatedAt: string;
 };
 
-/** 앱 기본 발송 문구 — 템플릿 수정에서 편집 */
 export const BUILTIN_MESSAGE_TEMPLATE_NAME: Record<MessageTemplateCampaign, string> = {
   survey: "기본 만족도조사",
   thank_you: "기본 감사문자",
-};
-
-const STORAGE_KEY: Record<MessageTemplateCampaign, string> = {
-  survey: "parking-manager-message-templates-survey-v1",
-  thank_you: "parking-manager-message-templates-thankyou-v1",
 };
 
 export const MESSAGE_TEMPLATE_PLACEHOLDER_HINT: Record<MessageTemplateCampaign, string> = {
@@ -28,9 +23,19 @@ export const MESSAGE_TEMPLATE_PLACEHOLDER_HINT: Record<MessageTemplateCampaign, 
   thank_you: "{담당자} {기관명} {일자} {행사목록}",
 };
 
-const SEED_TEMPLATE_BODY: Record<MessageTemplateCampaign, string> = {
+export const SEED_TEMPLATE_BODY: Record<MessageTemplateCampaign, string> = {
   survey: DEFAULT_SURVEY_MESSAGE_TEMPLATE,
   thank_you: DEFAULT_THANK_YOU_MESSAGE_TEMPLATE,
+};
+
+type MessageTemplateRow = {
+  id: string;
+  campaign: string;
+  name: string;
+  body: string;
+  is_builtin: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 export function isBuiltinMessageTemplateName(
@@ -40,87 +45,89 @@ export function isBuiltinMessageTemplateName(
   return name.trim() === BUILTIN_MESSAGE_TEMPLATE_NAME[campaign];
 }
 
-function newId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `tpl-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+function rowToSaved(row: MessageTemplateRow): SavedMessageTemplate {
+  return {
+    id: row.id,
+    name: row.name,
+    body: row.body,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
-export function loadMessageTemplates(campaign: MessageTemplateCampaign): SavedMessageTemplate[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY[campaign]);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as SavedMessageTemplate[];
-    return [...parsed].sort((a, b) => a.name.localeCompare(b.name, "ko"));
-  } catch {
-    return [];
-  }
+function sortTemplates(templates: SavedMessageTemplate[]): SavedMessageTemplate[] {
+  return [...templates].sort((a, b) => a.name.localeCompare(b.name, "ko"));
 }
 
-function persistMessageTemplates(campaign: MessageTemplateCampaign, templates: SavedMessageTemplate[]) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY[campaign], JSON.stringify(templates));
-  } catch {
-    /* ignore */
-  }
-}
-
-/** 기본 템플릿(기본 만족도조사·기본 감사문자)이 없으면 생성 */
-export function ensureBuiltinMessageTemplates(campaign: MessageTemplateCampaign): SavedMessageTemplate {
+async function ensureBuiltinMessageTemplates(
+  supabase: SupabaseClient,
+  campaign: MessageTemplateCampaign
+): Promise<void> {
   const name = BUILTIN_MESSAGE_TEMPLATE_NAME[campaign];
-  const existing = loadMessageTemplates(campaign).find((t) => t.name === name);
-  if (existing) return existing;
+  const { data, error } = await supabase
+    .from("message_templates")
+    .select("id")
+    .eq("campaign", campaign)
+    .eq("name", name)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[message_templates ensure]", error.message);
+    return;
+  }
+  if (data) return;
 
   const now = new Date().toISOString();
-  const item: SavedMessageTemplate = {
-    id: newId(),
+  const { error: insertError } = await supabase.from("message_templates").insert({
+    campaign,
     name,
     body: SEED_TEMPLATE_BODY[campaign],
-    createdAt: now,
-    updatedAt: now,
-  };
-  const next = [...loadMessageTemplates(campaign), item].sort((a, b) =>
-    a.name.localeCompare(b.name, "ko")
-  );
-  persistMessageTemplates(campaign, next);
-  return item;
+    is_builtin: true,
+    created_at: now,
+    updated_at: now,
+  });
+  if (insertError) console.warn("[message_templates ensure insert]", insertError.message);
 }
 
-export function findBuiltinMessageTemplate(
+export async function fetchMessageTemplates(
+  supabase: SupabaseClient,
   campaign: MessageTemplateCampaign
-): SavedMessageTemplate | null {
-  if (typeof window === "undefined") return null;
-  ensureBuiltinMessageTemplates(campaign);
-  return (
-    loadMessageTemplates(campaign).find((t) => t.name === BUILTIN_MESSAGE_TEMPLATE_NAME[campaign]) ??
-    null
-  );
+): Promise<SavedMessageTemplate[]> {
+  await ensureBuiltinMessageTemplates(supabase, campaign);
+
+  const { data, error } = await supabase
+    .from("message_templates")
+    .select("id, campaign, name, body, is_builtin, created_at, updated_at")
+    .eq("campaign", campaign)
+    .order("name");
+
+  if (error) {
+    console.warn("[message_templates fetch]", error.message);
+    return [];
+  }
+
+  return sortTemplates((data ?? []).map((row) => rowToSaved(row as MessageTemplateRow)));
 }
 
-/** 발송·미리보기 기본 문구 본문 (플레이스홀더 포함) */
-export function getBuiltinMessageTemplateBody(campaign: MessageTemplateCampaign): string {
-  if (typeof window === "undefined") return SEED_TEMPLATE_BODY[campaign];
-  const tpl = findBuiltinMessageTemplate(campaign);
-  return tpl?.body.trim() || SEED_TEMPLATE_BODY[campaign];
+export async function fetchBuiltinMessageTemplateBody(
+  supabase: SupabaseClient,
+  campaign: MessageTemplateCampaign
+): Promise<string> {
+  const templates = await fetchMessageTemplates(supabase, campaign);
+  const builtin = templates.find((t) => t.name === BUILTIN_MESSAGE_TEMPLATE_NAME[campaign]);
+  return builtin?.body.trim() || SEED_TEMPLATE_BODY[campaign];
 }
 
-export function getDefaultMessageTemplateBody(campaign: MessageTemplateCampaign): string {
-  return getBuiltinMessageTemplateBody(campaign);
+export function suggestNewTemplateName(templateCount: number): string {
+  return `템플릿 ${templateCount + 1}`;
 }
 
-export function suggestNewTemplateName(campaign: MessageTemplateCampaign): string {
-  const count = loadMessageTemplates(campaign).length;
-  return `템플릿 ${count + 1}`;
-}
-
-export function createMessageTemplate(
+export async function createMessageTemplate(
+  supabase: SupabaseClient,
   campaign: MessageTemplateCampaign,
   name: string,
   body: string
-): SavedMessageTemplate {
+): Promise<SavedMessageTemplate> {
   const trimmedName = name.trim();
   const trimmedBody = body.trim();
   if (!trimmedName || !trimmedBody) {
@@ -129,58 +136,93 @@ export function createMessageTemplate(
   if (isBuiltinMessageTemplateName(campaign, trimmedName)) {
     throw new Error(`「${trimmedName}」 이름은 기본 템플릿 전용입니다.`);
   }
+
   const now = new Date().toISOString();
-  const item: SavedMessageTemplate = {
-    id: newId(),
-    name: trimmedName,
-    body: trimmedBody,
-    createdAt: now,
-    updatedAt: now,
-  };
-  const next = [...loadMessageTemplates(campaign), item].sort((a, b) =>
-    a.name.localeCompare(b.name, "ko")
-  );
-  persistMessageTemplates(campaign, next);
-  return item;
+  const { data, error } = await supabase
+    .from("message_templates")
+    .insert({
+      campaign,
+      name: trimmedName,
+      body: trimmedBody,
+      is_builtin: false,
+      created_at: now,
+      updated_at: now,
+    })
+    .select("id, campaign, name, body, is_builtin, created_at, updated_at")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") throw new Error("같은 이름의 템플릿이 이미 있습니다.");
+    throw new Error(error.message || "템플릿 저장에 실패했습니다.");
+  }
+
+  return rowToSaved(data as MessageTemplateRow);
 }
 
-export function updateMessageTemplate(
+export async function updateMessageTemplate(
+  supabase: SupabaseClient,
   campaign: MessageTemplateCampaign,
   id: string,
   patch: { name?: string; body?: string }
-): SavedMessageTemplate | null {
-  const list = loadMessageTemplates(campaign);
-  const idx = list.findIndex((t) => t.id === id);
-  if (idx < 0) return null;
-  const prev = list[idx]!;
-  const isBuiltin = isBuiltinMessageTemplateName(campaign, prev.name);
-  if (isBuiltin && patch.name !== undefined && patch.name.trim() !== prev.name) {
+): Promise<SavedMessageTemplate | null> {
+  const { data: existing, error: fetchError } = await supabase
+    .from("message_templates")
+    .select("id, campaign, name, body, is_builtin, created_at, updated_at")
+    .eq("id", id)
+    .eq("campaign", campaign)
+    .maybeSingle();
+
+  if (fetchError) throw new Error(fetchError.message);
+  if (!existing) return null;
+
+  const prev = existing as MessageTemplateRow;
+  if (prev.is_builtin && patch.name !== undefined && patch.name.trim() !== prev.name) {
     throw new Error(`「${prev.name}」 템플릿 이름은 변경할 수 없습니다.`);
   }
-  const name = patch.name !== undefined ? patch.name.trim() : prev.name;
-  const body = patch.body !== undefined ? patch.body.trim() : prev.body;
-  if (!name || !body) throw new Error("템플릿 이름과 본문을 입력해 주세요.");
-  const updated: SavedMessageTemplate = {
-    ...prev,
-    name,
-    body,
-    updatedAt: new Date().toISOString(),
-  };
-  const next = [...list];
-  next[idx] = updated;
-  next.sort((a, b) => a.name.localeCompare(b.name, "ko"));
-  persistMessageTemplates(campaign, next);
-  return updated;
+
+  const nextName = patch.name !== undefined ? patch.name.trim() : prev.name;
+  const nextBody = patch.body !== undefined ? patch.body.trim() : prev.body;
+  if (!nextName || !nextBody) throw new Error("템플릿 이름과 본문을 입력해 주세요.");
+
+  const { data, error } = await supabase
+    .from("message_templates")
+    .update({
+      name: nextName,
+      body: nextBody,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .eq("campaign", campaign)
+    .select("id, campaign, name, body, is_builtin, created_at, updated_at")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") throw new Error("같은 이름의 템플릿이 이미 있습니다.");
+    throw new Error(error.message || "템플릿 수정에 실패했습니다.");
+  }
+
+  return rowToSaved(data as MessageTemplateRow);
 }
 
-export function deleteMessageTemplate(campaign: MessageTemplateCampaign, id: string): boolean {
-  const list = loadMessageTemplates(campaign);
-  const target = list.find((t) => t.id === id);
-  if (!target) return false;
-  if (isBuiltinMessageTemplateName(campaign, target.name)) {
-    throw new Error(`「${target.name}」 기본 템플릿은 삭제할 수 없습니다.`);
+export async function deleteMessageTemplate(
+  supabase: SupabaseClient,
+  campaign: MessageTemplateCampaign,
+  id: string
+): Promise<boolean> {
+  const { data: existing, error: fetchError } = await supabase
+    .from("message_templates")
+    .select("id, name, is_builtin")
+    .eq("id", id)
+    .eq("campaign", campaign)
+    .maybeSingle();
+
+  if (fetchError) throw new Error(fetchError.message);
+  if (!existing) return false;
+  if (existing.is_builtin || isBuiltinMessageTemplateName(campaign, existing.name)) {
+    throw new Error(`「${existing.name}」 기본 템플릿은 삭제할 수 없습니다.`);
   }
-  const next = list.filter((t) => t.id !== id);
-  persistMessageTemplates(campaign, next);
+
+  const { error } = await supabase.from("message_templates").delete().eq("id", id).eq("campaign", campaign);
+  if (error) throw new Error(error.message || "템플릿 삭제에 실패했습니다.");
   return true;
 }

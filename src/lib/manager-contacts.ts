@@ -13,8 +13,6 @@ export type ManagerContact = {
   updated_at?: string;
 };
 
-export const MANAGER_CONTACTS_STORAGE_KEY = "parking-manager-contacts-v1";
-
 export function managerContactKey(name: string, orgName: string): string {
   return `${String(orgName ?? "").trim()}::${String(name ?? "").trim()}`;
 }
@@ -74,52 +72,6 @@ export function buildManagerContactsFromProjects(projects: Project[]): ManagerCo
     if (c) items.push(c);
   }
   return mergeManagerContacts(items);
-}
-
-export function loadManagerContactsLocal(): ManagerContact[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(MANAGER_CONTACTS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as ManagerContact[];
-    return mergeManagerContacts(
-      parsed
-        .map((c) =>
-          normalizeContact({
-            name: c.name,
-            org_name: c.org_name,
-            phone: c.phone,
-            id: c.id,
-            updated_at: c.updated_at,
-          })
-        )
-        .filter((c): c is ManagerContact => Boolean(c))
-    );
-  } catch {
-    return [];
-  }
-}
-
-export function saveManagerContactsLocal(contacts: ManagerContact[]) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(MANAGER_CONTACTS_STORAGE_KEY, JSON.stringify(mergeManagerContacts(contacts)));
-  } catch {
-    /* ignore */
-  }
-}
-
-export function upsertManagerContactLocal(
-  contacts: ManagerContact[],
-  name: string,
-  orgName: string,
-  phone: string
-): ManagerContact[] {
-  const normalized = normalizeContact({ name, org_name: orgName, phone, updated_at: new Date().toISOString() });
-  if (!normalized) return contacts;
-  const next = mergeManagerContacts(contacts, [normalized]);
-  saveManagerContactsLocal(next);
-  return next;
 }
 
 export async function fetchManagerContacts(
@@ -279,9 +231,15 @@ export function persistManagerContact(input: {
 }): ManagerContact[] {
   const digits = sanitizeManagerPhoneDigits(input.phone);
   if (!input.name.trim() || !digits) return input.contacts;
-  if (input.isDev) {
-    return upsertManagerContactLocal(input.contacts, input.name, input.orgName, digits);
+  if (!input.isDev) {
+    void upsertManagerContactRemote(input.supabase, input.name, input.orgName, digits);
   }
-  void upsertManagerContactRemote(input.supabase, input.name, input.orgName, digits);
-  return upsertManagerContactLocal(input.contacts, input.name, input.orgName, digits);
+  const normalized = normalizeContact({
+    name: input.name,
+    org_name: input.orgName,
+    phone: digits,
+    updated_at: new Date().toISOString(),
+  });
+  if (!normalized) return input.contacts;
+  return mergeManagerContacts(input.contacts, [normalized]);
 }

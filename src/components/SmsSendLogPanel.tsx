@@ -1,18 +1,20 @@
 "use client";
 
 // 솔라피 발송 기록 목록·상태 새로고침
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { formatManagerPhoneDisplay } from "@/lib/manager-display";
 import { formatSmsStatusLabel } from "@/lib/solapi-status";
 import {
   filterSmsSendLogs,
-  loadSmsSendLogs,
+  getSmsSendLogsCache,
+  refreshSmsSendLogsCache,
   updateSmsSendLog,
   type SmsCampaign,
   type SmsSendLogEntry,
 } from "@/lib/sms-send-log";
 import { refreshMessageStatusesViaApi } from "@/lib/send-message-client";
+import { supabase } from "@/lib/supabase";
 
 type Props = {
   campaign: SmsCampaign;
@@ -48,31 +50,30 @@ export function SmsSendLogPanel({ campaign, campaignKey, logVersion, embedded = 
   const [refreshing, setRefreshing] = useState(false);
 
   const reload = useCallback(() => {
-    setLogs(filterSmsSendLogs(loadSmsSendLogs(), campaign, campaignKey));
+    void refreshSmsSendLogsCache(supabase).then((all) => {
+      setLogs(filterSmsSendLogs(all, campaign, campaignKey));
+    });
   }, [campaign, campaignKey]);
 
   useEffect(() => {
     reload();
   }, [reload, logVersion]);
 
-  const pendingIds = useMemo(
-    () =>
-      logs
-        .filter((e) => e.outcome === "pending" && e.messageId)
-        .map((e) => e.messageId as string),
-    [logs]
-  );
-
   const handleRefresh = async () => {
-    reload();
-    if (pendingIds.length === 0) return;
+    await refreshSmsSendLogsCache(supabase);
+    const currentLogs = filterSmsSendLogs(getSmsSendLogsCache(), campaign, campaignKey);
+    setLogs(currentLogs);
+    const pending = currentLogs
+      .filter((e) => e.outcome === "pending" && e.messageId)
+      .map((e) => e.messageId as string);
+    if (pending.length === 0) return;
     setRefreshing(true);
     try {
-      const statuses = await refreshMessageStatusesViaApi(pendingIds);
+      const statuses = await refreshMessageStatusesViaApi(pending);
       for (const [messageId, status] of Object.entries(statuses)) {
-        const entry = logs.find((e) => e.messageId === messageId);
+        const entry = currentLogs.find((e) => e.messageId === messageId);
         if (!entry) continue;
-        updateSmsSendLog(entry.id, {
+        await updateSmsSendLog(supabase, entry.id, {
           statusCode: status.statusCode,
           statusMessage: status.statusMessage,
           statusLabel: status.statusLabel,

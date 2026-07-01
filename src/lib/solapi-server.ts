@@ -51,6 +51,31 @@ type StoredSolapiMessage = {
 const POLL_INTERVAL_MS = 2000;
 const POLL_TIMEOUT_MS = 45000;
 
+/** LMS 제목 미설정 시 본문 앞 40byte가 제목으로 노출되어 인사말이 중복됨 */
+const LMS_SUBJECT_PLACEHOLDER = " ";
+
+function messageByteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+function isLmsMessage(text: string): boolean {
+  return messageByteLength(text) > 90;
+}
+
+function buildSolapiSendMessage(recipient: string, sender: string, body: string) {
+  if (!isLmsMessage(body)) {
+    return { to: recipient, from: sender, text: body };
+  }
+  return {
+    to: recipient,
+    from: sender,
+    text: body,
+    type: "LMS" as const,
+    subject: LMS_SUBJECT_PLACEHOLDER,
+    autoTypeDetect: false,
+  };
+}
+
 export function getSolapiConfig(): SolapiConfig | null {
   const apiKey = process.env.SOLAPI_API_KEY?.trim();
   const apiSecret = process.env.SOLAPI_API_SECRET?.trim();
@@ -245,7 +270,7 @@ export async function sendSmsViaSolapi(
 
   try {
     const result = await messageService.send(
-      { to: recipient, from: config.sender, text: body },
+      buildSolapiSendMessage(recipient, config.sender, body),
       { showMessageList: true }
     );
 

@@ -15,7 +15,6 @@ import { ManagerContactField } from "@/components/ManagerContactField";
 import {
   buildManagerContactsFromProjects,
   fetchManagerContacts,
-  loadManagerContactsLocal,
   mergeManagerContacts,
   persistManagerContact,
   type ManagerContact,
@@ -89,7 +88,7 @@ export default function EditProjectForm() {
     void (async () => {
       if (isDevMode()) {
         const fromProjects = buildManagerContactsFromProjects(devStore.getProjects());
-        setManagerContacts(mergeManagerContacts(loadManagerContactsLocal(), fromProjects));
+        setManagerContacts(fromProjects);
         return;
       }
       const [contacts, projectsRes] = await Promise.all([
@@ -97,9 +96,7 @@ export default function EditProjectForm() {
         supabase.from("projects").select("manager, manager_phone, org_name, updated_at"),
       ]);
       const fromProjects = buildManagerContactsFromProjects((projectsRes.data ?? []) as Project[]);
-      setManagerContacts(
-        mergeManagerContacts(contacts, fromProjects, loadManagerContactsLocal())
-      );
+      setManagerContacts(mergeManagerContacts(contacts, fromProjects));
     })();
   }, [devStore.data]);
 

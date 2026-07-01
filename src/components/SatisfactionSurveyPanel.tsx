@@ -4,12 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, ClipboardList, PlusCircle, Send } from "lucide-react";
 import type { Project } from "@/lib/supabase";
 import { navigateToNewProject } from "@/lib/navigate";
-import { isDevMode } from "@/lib/dev-mode";
 import { supabase } from "@/lib/supabase";
 import {
   fetchManagerContacts,
-  loadManagerContactsLocal,
-  mergeManagerContacts,
   type ManagerContact,
 } from "@/lib/manager-contacts";
 import { formatManagerPhoneDisplay, sanitizeManagerPhoneDigits } from "@/lib/manager-display";
@@ -20,17 +17,24 @@ import {
   shouldMarkRecipientAsSent,
 } from "@/lib/recipient-sms-feedback";
 import { MessageTemplateControls } from "@/components/MessageTemplateControls";
+import { fetchBuiltinMessageTemplateBody } from "@/lib/message-templates";
 import {
-  ensureBuiltinMessageTemplates,
-  getBuiltinMessageTemplateBody,
-} from "@/lib/message-templates";
+  applyBulkMessageOverride,
+  deleteBulkMessageOverride,
+  fetchCampaignMessageOverrides,
+  upsertIndividualMessageOverride,
+} from "@/lib/campaign-message-overrides";
+import {
+  fetchSmsRecipientFieldOverrides,
+  upsertSmsRecipientFieldOverride,
+} from "@/lib/sms-recipient-field-overrides";
 import { SmsSendLogModal } from "@/components/SmsSendLogModal";
 import { useSmsPendingSync } from "@/hooks/useSmsPendingSync";
 import { ensureSmsPendingTracker, countCampaignSmsLogs } from "@/lib/sms-pending-tracker";
 import {
-  loadRecipientSentIds,
+  addRecipientSentId,
+  fetchRecipientSentIds,
   removeRecipientSentId,
-  saveRecipientSentIds,
 } from "@/lib/recipient-sent-storage";
 import {
   currentYearMonth,
@@ -63,64 +67,6 @@ function filterChipClass(active: boolean, base: string) {
   return active
     ? `${base} ring-2 ring-[var(--primary)] ring-offset-1`
     : `${base} hover:opacity-90`;
-}
-
-const BULK_TEMPLATE_KEY = "parking-manager-survey-template-v1";
-const INDIVIDUAL_MESSAGE_KEY = "parking-manager-survey-individual-v1";
-const PHONE_OVERRIDE_KEY = "parking-manager-survey-phone-v1";
-
-function loadBulkTemplates(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(BULK_TEMPLATE_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveBulkTemplates(data: Record<string, string>) {
-  try {
-    localStorage.setItem(BULK_TEMPLATE_KEY, JSON.stringify(data));
-  } catch {
-    /* ignore */
-  }
-}
-
-function loadIndividualMessages(): Record<string, Record<string, string>> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(INDIVIDUAL_MESSAGE_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, Record<string, string>>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveIndividualMessages(data: Record<string, Record<string, string>>) {
-  try {
-    localStorage.setItem(INDIVIDUAL_MESSAGE_KEY, JSON.stringify(data));
-  } catch {
-    /* ignore */
-  }
-}
-
-function loadPhoneOverrides(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(PHONE_OVERRIDE_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function savePhoneOverrides(data: Record<string, string>) {
-  try {
-    localStorage.setItem(PHONE_OVERRIDE_KEY, JSON.stringify(data));
-  } catch {
-    /* ignore */
-  }
 }
 
 function buildParams(
@@ -166,13 +112,13 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
   const [managerContacts, setManagerContacts] = useState<ManagerContact[]>([]);
   const [builtinTemplateBody, setBuiltinTemplateBody] = useState("");
 
-  const refreshBuiltinTemplate = useCallback(() => {
-    setBuiltinTemplateBody(getBuiltinMessageTemplateBody("survey"));
+  const refreshBuiltinTemplate = useCallback(async () => {
+    const body = await fetchBuiltinMessageTemplateBody(supabase, "survey");
+    setBuiltinTemplateBody(body);
   }, []);
 
   useEffect(() => {
-    ensureBuiltinMessageTemplates("survey");
-    refreshBuiltinTemplate();
+    void refreshBuiltinTemplate();
   }, [refreshBuiltinTemplate]);
 
   useSmsPendingSync({
@@ -189,20 +135,27 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
 
   useEffect(() => {
     void (async () => {
-      if (isDevMode()) {
-        setManagerContacts(loadManagerContactsLocal());
-        return;
-      }
       const contacts = await fetchManagerContacts(supabase);
-      setManagerContacts(mergeManagerContacts(contacts, loadManagerContactsLocal()));
+      setManagerContacts(contacts);
     })();
   }, []);
 
   useEffect(() => {
-    setSentIds(loadRecipientSentIds("survey", yearMonth));
-    setBulkTemplates(loadBulkTemplates());
-    setIndividualMessages(loadIndividualMessages());
-    setPhoneOverrides(loadPhoneOverrides());
+    void (async () => {
+      const [messages, fields] = await Promise.all([
+        fetchCampaignMessageOverrides(supabase, "survey"),
+        fetchSmsRecipientFieldOverrides(supabase, "survey"),
+      ]);
+      setBulkTemplates(messages.bulk);
+      setIndividualMessages(messages.individual);
+      setOrgOverrides(fields.org);
+      setManagerOverrides(fields.manager);
+      setPhoneOverrides(fields.phone);
+    })();
+  }, []);
+
+  useEffect(() => {
+    void fetchRecipientSentIds(supabase, "survey", yearMonth).then(setSentIds);
     setIsEditing(false);
     setApplyFeedback(null);
     setListFilter("all");
@@ -308,12 +261,21 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
   };
 
   const saveIndividual = (recipientId: string, body: string) => {
+    const trimmed = body.trim();
     const next = { ...individualMessages };
     const monthMap = { ...(next[yearMonth] ?? {}) };
-    monthMap[recipientId] = body.trim();
+    monthMap[recipientId] = trimmed;
     next[yearMonth] = monthMap;
     setIndividualMessages(next);
-    saveIndividualMessages(next);
+    void upsertIndividualMessageOverride(
+      supabase,
+      "survey",
+      yearMonth,
+      recipientId,
+      trimmed
+    ).catch((err) =>
+      showFeedback(err instanceof Error ? err.message : "개별 문구 저장에 실패했습니다.")
+    );
   };
 
   const syncNameChangeInDraft = (prev: string, from: string, to: string) =>
@@ -331,6 +293,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     if (!selected) return;
     const prevOrg = orgOverrides[selected.id] ?? selected.displayOrgName;
     setOrgOverrides((prev) => ({ ...prev, [selected.id]: newOrg }));
+    void upsertSmsRecipientFieldOverride(supabase, "survey", selected.id, { orgName: newOrg });
     if (isEditing) {
       setEditDraft((d) => syncNameChangeInDraft(d, prevOrg, newOrg));
     }
@@ -341,6 +304,9 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     if (!selected) return;
     const prevManager = managerOverrides[selected.id] ?? selected.manager;
     setManagerOverrides((prev) => ({ ...prev, [selected.id]: newManager }));
+    void upsertSmsRecipientFieldOverride(supabase, "survey", selected.id, {
+      managerName: newManager,
+    });
     if (isEditing) {
       setEditDraft((d) => syncNameChangeInDraft(d, prevManager, newManager));
     }
@@ -352,7 +318,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     const digits = sanitizeManagerPhoneDigits(raw);
     const next = { ...phoneOverrides, [selected.id]: digits };
     setPhoneOverrides(next);
-    savePhoneOverrides(next);
+    void upsertSmsRecipientFieldOverride(supabase, "survey", selected.id, { phone: digits });
   };
 
   const handleStartEdit = () => {
@@ -369,35 +335,37 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     showFeedback("현재 담당자에 개별 적용되었습니다.");
   };
 
-  const handleApplyBulk = () => {
+  const handleApplyBulk = async () => {
     if (!selected || !editDraft.trim()) return;
     const params = buildParams(selected, yearMonth, displayOrg, displayManager);
     const template = deriveSurveyTemplateFromMessage(editDraft, params);
-    const nextBulk = { ...bulkTemplates, [yearMonth]: template };
-    setBulkTemplates(nextBulk);
-    saveBulkTemplates(nextBulk);
-
-    const nextIndividual = { ...individualMessages };
-    delete nextIndividual[yearMonth];
-    setIndividualMessages(nextIndividual);
-    saveIndividualMessages(nextIndividual);
-
-    setIsEditing(false);
-    showFeedback("이 달 전체 담당자에 일괄 적용되었습니다.");
+    try {
+      const data = await applyBulkMessageOverride(supabase, "survey", yearMonth, template);
+      setBulkTemplates(data.bulk);
+      setIndividualMessages(data.individual);
+      setIsEditing(false);
+      showFeedback("이 달 전체 담당자에 일괄 적용되었습니다.");
+    } catch (err) {
+      showFeedback(err instanceof Error ? err.message : "일괄 문구 저장에 실패했습니다.");
+    }
   };
 
-  const handleResetBulk = () => {
+  const handleResetBulk = async () => {
     if (!bulkTemplates[yearMonth]) return;
     const ok = confirm(
       "이 달에 일괄 적용한 문구를 취소하고 기본 문구로 되돌릴까요?\n(개별 적용 문구는 유지됩니다.)"
     );
     if (!ok) return;
-    const nextBulk = { ...bulkTemplates };
-    delete nextBulk[yearMonth];
-    setBulkTemplates(nextBulk);
-    saveBulkTemplates(nextBulk);
-    setIsEditing(false);
-    showFeedback("기본 문구로 되돌렸습니다.");
+    try {
+      await deleteBulkMessageOverride(supabase, "survey", yearMonth);
+      const nextBulk = { ...bulkTemplates };
+      delete nextBulk[yearMonth];
+      setBulkTemplates(nextBulk);
+      setIsEditing(false);
+      showFeedback("기본 문구로 되돌렸습니다.");
+    } catch (err) {
+      showFeedback(err instanceof Error ? err.message : "일괄 문구 삭제에 실패했습니다.");
+    }
   };
 
   const getTemplateBodyForSave = useCallback(() => {
@@ -419,15 +387,15 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     previewBody,
   ]);
 
-  const handleApplySavedTemplate = (body: string) => {
-    const nextBulk = { ...bulkTemplates, [yearMonth]: body };
-    setBulkTemplates(nextBulk);
-    saveBulkTemplates(nextBulk);
-    const nextIndividual = { ...individualMessages };
-    delete nextIndividual[yearMonth];
-    setIndividualMessages(nextIndividual);
-    saveIndividualMessages(nextIndividual);
-    setIsEditing(false);
+  const handleApplySavedTemplate = async (body: string) => {
+    try {
+      const data = await applyBulkMessageOverride(supabase, "survey", yearMonth, body);
+      setBulkTemplates(data.bulk);
+      setIndividualMessages(data.individual);
+      setIsEditing(false);
+    } catch (err) {
+      showFeedback(err instanceof Error ? err.message : "템플릿 적용에 실패했습니다.");
+    }
   };
 
   const handleSend = async (recipient: SurveyRecipient) => {
@@ -454,7 +422,8 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     setSendingId(recipient.id);
     try {
       const result = await sendMessageViaApi({ to: phone, text: preview });
-      appendSmsSendLog(
+      await appendSmsSendLog(
+        supabase,
         buildSmsSendLogEntry({
           campaign: "survey",
           campaignKey: yearMonth,
@@ -468,7 +437,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
         })
       );
       setLogVersion((v) => v + 1);
-      ensureSmsPendingTracker();
+      void ensureSmsPendingTracker();
 
       if (result.outcome === "pending") {
         setPendingRecipientIds((prev) => new Set(prev).add(recipient.id));
@@ -478,7 +447,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
         const next = new Set(sentIds);
         next.add(recipient.id);
         setSentIds(next);
-        saveRecipientSentIds("survey", yearMonth, next);
+        void addRecipientSentId(supabase, "survey", yearMonth, recipient.id);
       }
 
       alert(describeSmsSendResult(result));
@@ -498,7 +467,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     const next = new Set(sentIds);
     next.delete(recipientId);
     setSentIds(next);
-    removeRecipientSentId("survey", yearMonth, recipientId);
+    void removeRecipientSentId(supabase, "survey", yearMonth, recipientId);
   };
 
   const toggleExpanded = (id: string) => {

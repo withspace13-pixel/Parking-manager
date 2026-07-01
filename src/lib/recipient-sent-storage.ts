@@ -1,66 +1,55 @@
-// 감사문자·만족도 조사 발송 완료 담당자 ID (localStorage)
-
+// 감사문자·만족도 조사 발송 완료 담당자 ID (Supabase 공유)
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SmsCampaign } from "@/lib/sms-send-log";
 
-const STORAGE_KEYS: Record<SmsCampaign, string> = {
-  survey: "parking-manager-survey-sent-v1",
-  thank_you: "parking-manager-thankyou-sent-v1",
-};
-
-function readAll(campaign: SmsCampaign): Record<string, string[]> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS[campaign]);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, string[]>;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeAll(campaign: SmsCampaign, data: Record<string, string[]>) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEYS[campaign], JSON.stringify(data));
-  } catch {
-    /* ignore */
-  }
-}
-
-export function loadRecipientSentIds(campaign: SmsCampaign, campaignKey: string): Set<string> {
-  const parsed = readAll(campaign);
-  return new Set(parsed[campaignKey] ?? []);
-}
-
-export function saveRecipientSentIds(
+export async function fetchRecipientSentIds(
+  supabase: SupabaseClient,
   campaign: SmsCampaign,
-  campaignKey: string,
-  ids: Set<string>
-): void {
-  const parsed = readAll(campaign);
-  parsed[campaignKey] = Array.from(ids);
-  writeAll(campaign, parsed);
+  campaignKey: string
+): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from("campaign_recipient_sent")
+    .select("recipient_id")
+    .eq("campaign", campaign)
+    .eq("campaign_key", campaignKey);
+
+  if (error) {
+    console.warn("[campaign_recipient_sent fetch]", error.message);
+    return new Set();
+  }
+
+  return new Set((data ?? []).map((row) => row.recipient_id as string));
 }
 
-export function addRecipientSentId(
+export async function addRecipientSentId(
+  supabase: SupabaseClient,
   campaign: SmsCampaign,
   campaignKey: string,
   recipientId: string
-): void {
-  const ids = loadRecipientSentIds(campaign, campaignKey);
-  if (ids.has(recipientId)) return;
-  ids.add(recipientId);
-  saveRecipientSentIds(campaign, campaignKey, ids);
+): Promise<void> {
+  const { error } = await supabase.from("campaign_recipient_sent").upsert(
+    {
+      campaign,
+      campaign_key: campaignKey,
+      recipient_id: recipientId,
+      sent_at: new Date().toISOString(),
+    },
+    { onConflict: "campaign,campaign_key,recipient_id" }
+  );
+  if (error) console.warn("[campaign_recipient_sent add]", error.message);
 }
 
-export function removeRecipientSentId(
+export async function removeRecipientSentId(
+  supabase: SupabaseClient,
   campaign: SmsCampaign,
   campaignKey: string,
   recipientId: string
-): void {
-  const ids = loadRecipientSentIds(campaign, campaignKey);
-  if (!ids.has(recipientId)) return;
-  ids.delete(recipientId);
-  saveRecipientSentIds(campaign, campaignKey, ids);
+): Promise<void> {
+  const { error } = await supabase
+    .from("campaign_recipient_sent")
+    .delete()
+    .eq("campaign", campaign)
+    .eq("campaign_key", campaignKey)
+    .eq("recipient_id", recipientId);
+  if (error) console.warn("[campaign_recipient_sent remove]", error.message);
 }

@@ -7,15 +7,15 @@ import {
   BUILTIN_MESSAGE_TEMPLATE_NAME,
   createMessageTemplate,
   deleteMessageTemplate,
-  ensureBuiltinMessageTemplates,
-  getDefaultMessageTemplateBody,
+  fetchMessageTemplates,
   isBuiltinMessageTemplateName,
-  loadMessageTemplates,
+  SEED_TEMPLATE_BODY,
   suggestNewTemplateName,
   updateMessageTemplate,
   type MessageTemplateCampaign,
   type SavedMessageTemplate,
 } from "@/lib/message-templates";
+import { supabase } from "@/lib/supabase";
 
 type Props = {
   campaign: MessageTemplateCampaign;
@@ -37,6 +37,8 @@ export function MessageTemplateControls({
   disabled,
 }: Props) {
   const [templates, setTemplates] = useState<SavedMessageTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [manageOpen, setManageOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -44,19 +46,25 @@ export function MessageTemplateControls({
   const [editName, setEditName] = useState("");
   const [editBody, setEditBody] = useState("");
 
-  const reload = useCallback(() => {
-    ensureBuiltinMessageTemplates(campaign);
-    const list = loadMessageTemplates(campaign);
-    setTemplates(list);
-    const builtin = list.find((t) => t.name === BUILTIN_MESSAGE_TEMPLATE_NAME[campaign]);
-    setSelectedId((prev) => {
-      if (prev && list.some((t) => t.id === prev)) return prev;
-      return builtin?.id ?? list[0]?.id ?? "";
-    });
+  const reload = useCallback(async () => {
+    setTemplatesLoading(true);
+    try {
+      const list = await fetchMessageTemplates(supabase, campaign);
+      setTemplates(list);
+      const builtin = list.find((t) => t.name === BUILTIN_MESSAGE_TEMPLATE_NAME[campaign]);
+      setSelectedId((prev) => {
+        if (prev && list.some((t) => t.id === prev)) return prev;
+        return builtin?.id ?? list[0]?.id ?? "";
+      });
+    } catch (err) {
+      console.warn("[message_templates reload]", err);
+    } finally {
+      setTemplatesLoading(false);
+    }
   }, [campaign]);
 
   useEffect(() => {
-    reload();
+    void reload();
   }, [reload]);
 
   const loadTemplateIntoForm = (tpl: SavedMessageTemplate) => {
@@ -69,19 +77,22 @@ export function MessageTemplateControls({
   const resetFormForCreate = () => {
     setIsCreating(true);
     setEditTemplateId(null);
-    setEditName(suggestNewTemplateName(campaign));
-    setEditBody(getDefaultMessageTemplateBody(campaign));
+    setEditName(suggestNewTemplateName(templates.length));
+    const builtin = templates.find((t) => t.name === BUILTIN_MESSAGE_TEMPLATE_NAME[campaign]);
+    setEditBody(builtin?.body ?? SEED_TEMPLATE_BODY[campaign]);
   };
 
-  const openManage = () => {
-    reload();
-    const list = loadMessageTemplates(campaign);
+  const openManage = async () => {
+    const list = await fetchMessageTemplates(supabase, campaign);
+    setTemplates(list);
     const builtin = list.find((t) => t.name === BUILTIN_MESSAGE_TEMPLATE_NAME[campaign]);
     if (list.length === 0) {
-      resetFormForCreate();
+      setIsCreating(true);
+      setEditTemplateId(null);
+      setEditName(suggestNewTemplateName(0));
+      setEditBody(builtin?.body ?? SEED_TEMPLATE_BODY[campaign]);
     } else {
-      const initial =
-        list.find((t) => t.id === selectedId) ?? builtin ?? list[0]!;
+      const initial = list.find((t) => t.id === selectedId) ?? builtin ?? list[0]!;
       loadTemplateIntoForm(initial);
     }
     setManageOpen(true);
@@ -106,22 +117,25 @@ export function MessageTemplateControls({
     onFeedback(`「${tpl.name}」 템플릿을 불러왔습니다.`);
   };
 
-  const handleSaveCurrent = () => {
+  const handleSaveCurrent = async () => {
     const body = getTemplateBody().trim();
     if (!body) {
       onFeedback("저장할 문구가 없습니다.");
       return;
     }
-    const defaultName = suggestNewTemplateName(campaign);
+    const defaultName = suggestNewTemplateName(templates.length);
     const name = window.prompt("템플릿 이름을 입력해 주세요.", defaultName)?.trim();
     if (!name) return;
+    setSaving(true);
     try {
-      const created = createMessageTemplate(campaign, name, body);
-      reload();
+      const created = await createMessageTemplate(supabase, campaign, name, body);
+      await reload();
       setSelectedId(created.id);
       onFeedback(`「${name}」 템플릿을 저장했습니다.`);
     } catch (err) {
       onFeedback(err instanceof Error ? err.message : "저장에 실패했습니다.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -135,26 +149,32 @@ export function MessageTemplateControls({
     loadTemplateIntoForm(tpl);
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
+    setSaving(true);
     try {
       if (isCreating || !editTemplateId) {
-        const created = createMessageTemplate(campaign, editName, editBody);
-        reload();
+        const created = await createMessageTemplate(supabase, campaign, editName, editBody);
+        await reload();
         setSelectedId(created.id);
         loadTemplateIntoForm(created);
         onFeedback(`「${created.name}」 템플릿을 추가했습니다.`);
         return;
       }
-      updateMessageTemplate(campaign, editTemplateId, { name: editName, body: editBody });
-      reload();
+      await updateMessageTemplate(supabase, campaign, editTemplateId, {
+        name: editName,
+        body: editBody,
+      });
+      await reload();
       onFeedback("템플릿을 수정했습니다.");
       onTemplatesChanged?.();
     } catch (err) {
       onFeedback(err instanceof Error ? err.message : "저장에 실패했습니다.");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!editTemplateId) return;
     const tpl = templates.find((t) => t.id === editTemplateId);
     if (!tpl) return;
@@ -164,10 +184,11 @@ export function MessageTemplateControls({
     }
     const ok = confirm(`「${tpl.name}」 템플릿을 삭제할까요?`);
     if (!ok) return;
+    setSaving(true);
     try {
-      deleteMessageTemplate(campaign, tpl.id);
+      await deleteMessageTemplate(supabase, campaign, tpl.id);
       if (selectedId === tpl.id) setSelectedId("");
-      const next = loadMessageTemplates(campaign);
+      const next = await fetchMessageTemplates(supabase, campaign);
       setTemplates(next);
       if (next.length === 0) {
         resetFormForCreate();
@@ -178,6 +199,8 @@ export function MessageTemplateControls({
       onFeedback("템플릿을 삭제했습니다.");
     } catch (err) {
       onFeedback(err instanceof Error ? err.message : "삭제에 실패했습니다.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -188,6 +211,7 @@ export function MessageTemplateControls({
     );
 
   const modalSelectValue = isCreating || !editTemplateId ? "__new__" : editTemplateId;
+  const controlsDisabled = disabled || templatesLoading || saving;
 
   return (
     <>
@@ -197,11 +221,15 @@ export function MessageTemplateControls({
           <select
             value={selectedId}
             onChange={(e) => setSelectedId(e.target.value)}
-            disabled={disabled || templates.length === 0}
+            disabled={controlsDisabled || templates.length === 0}
             className="input min-w-0 flex-1 px-2 py-1.5 text-xs sm:max-w-xs"
           >
             <option value="">
-              {templates.length === 0 ? "저장된 템플릿 없음" : "템플릿 선택…"}
+              {templatesLoading
+                ? "템플릿 불러오는 중…"
+                : templates.length === 0
+                  ? "저장된 템플릿 없음"
+                  : "템플릿 선택…"}
             </option>
             {templates.map((t) => (
               <option key={t.id} value={t.id}>
@@ -211,7 +239,7 @@ export function MessageTemplateControls({
           </select>
           <button
             type="button"
-            disabled={disabled || !selectedId}
+            disabled={controlsDisabled || !selectedId}
             onClick={handleLoad}
             className="rounded-md border border-[var(--primary)] bg-[#EFF6FF] px-2.5 py-1.5 text-xs font-semibold text-[var(--primary)] hover:bg-[#DBEAFE] disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -219,16 +247,16 @@ export function MessageTemplateControls({
           </button>
           <button
             type="button"
-            disabled={disabled}
-            onClick={handleSaveCurrent}
+            disabled={controlsDisabled}
+            onClick={() => void handleSaveCurrent()}
             className="rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-white/80 disabled:opacity-50"
           >
             현재 문구 저장
           </button>
           <button
             type="button"
-            disabled={disabled}
-            onClick={openManage}
+            disabled={controlsDisabled}
+            onClick={() => void openManage()}
             className="rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-xs font-semibold text-[var(--text-muted)] hover:bg-white/80 disabled:opacity-50"
           >
             템플릿 수정
@@ -294,23 +322,26 @@ export function MessageTemplateControls({
               <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
                 <button
                   type="button"
-                  onClick={saveEdit}
-                  className="btn btn-primary px-4 py-2 text-xs font-semibold"
+                  onClick={() => void saveEdit()}
+                  disabled={saving}
+                  className="btn btn-primary px-4 py-2 text-xs font-semibold disabled:opacity-50"
                 >
-                  {isCreating ? "추가" : "저장"}
+                  {saving ? "저장 중…" : isCreating ? "추가" : "저장"}
                 </button>
                 <button
                   type="button"
                   onClick={closeManage}
-                  className="rounded-md border border-[var(--border)] bg-white px-4 py-2 text-xs font-medium text-[var(--text-muted)] hover:bg-[#F8FAFC]"
+                  disabled={saving}
+                  className="rounded-md border border-[var(--border)] bg-white px-4 py-2 text-xs font-medium text-[var(--text-muted)] hover:bg-[#F8FAFC] disabled:opacity-50"
                 >
                   취소
                 </button>
                 {editTemplateId && !editingBuiltin && (
                   <button
                     type="button"
-                    onClick={handleDelete}
-                    className="ml-auto inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-100"
+                    onClick={() => void handleDelete()}
+                    disabled={saving}
+                    className="ml-auto inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                     삭제

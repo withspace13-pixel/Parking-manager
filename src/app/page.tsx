@@ -515,7 +515,7 @@ export default function HomePage() {
               >
                 <Home className="h-4 w-4" />
               </button>
-              <h1 className="text-xl font-semibold text-[var(--text)]">주차권 관리 및 자동 정산</h1>
+              <h1 className="text-xl font-semibold text-[var(--text)]">주차권 정산 및 고객 관리</h1>
               {isDevMode() && (
                 <Badge variant="secondary">개발자 모드</Badge>
               )}
