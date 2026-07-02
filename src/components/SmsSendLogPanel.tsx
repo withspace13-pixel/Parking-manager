@@ -6,9 +6,7 @@ import { RefreshCw } from "lucide-react";
 import { formatManagerPhoneDisplay } from "@/lib/manager-display";
 import { formatSmsStatusLabel } from "@/lib/solapi-status";
 import {
-  filterSmsSendLogs,
-  getSmsSendLogsCache,
-  refreshSmsSendLogsCache,
+  fetchSmsSendLogs,
   updateSmsSendLog,
   type SmsCampaign,
   type SmsSendLogEntry,
@@ -50,18 +48,25 @@ export function SmsSendLogPanel({ campaign, campaignKey, logVersion, embedded = 
   const [refreshing, setRefreshing] = useState(false);
 
   const reload = useCallback(() => {
-    void refreshSmsSendLogsCache(supabase).then((all) => {
-      setLogs(filterSmsSendLogs(all, campaign, campaignKey));
+    void fetchSmsSendLogs(supabase, {
+      campaign,
+      campaignKey,
+      limit: embedded ? 50 : 100,
+    }).then((entries) => {
+      setLogs(entries);
     });
-  }, [campaign, campaignKey]);
+  }, [campaign, campaignKey, embedded]);
 
   useEffect(() => {
     reload();
-  }, [reload, logVersion]);
+  }, [reload]);
 
   const handleRefresh = async () => {
-    await refreshSmsSendLogsCache(supabase);
-    const currentLogs = filterSmsSendLogs(getSmsSendLogsCache(), campaign, campaignKey);
+    const currentLogs = await fetchSmsSendLogs(supabase, {
+      campaign,
+      campaignKey,
+      limit: embedded ? 50 : 100,
+    });
     setLogs(currentLogs);
     const pending = currentLogs
       .filter((e) => e.outcome === "pending" && e.messageId)

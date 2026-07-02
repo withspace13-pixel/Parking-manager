@@ -24,7 +24,7 @@ export type SmsSendLogEntry = {
   sentAt: string;
 };
 
-const MAX_LOGS = 500;
+const MAX_LOGS = 100;
 
 type SmsSendLogRow = {
   id: string;
@@ -123,6 +123,38 @@ export function getSmsSendLogsCache(): SmsSendLogEntry[] {
   return logCache;
 }
 
+export type SmsLogQuery = {
+  campaign?: SmsCampaign;
+  campaignKey?: string;
+  limit?: number;
+  pendingOnly?: boolean;
+};
+
+export async function fetchSmsSendLogs(
+  supabase: SupabaseClient,
+  query: SmsLogQuery = {}
+): Promise<SmsSendLogEntry[]> {
+  let builder = supabase
+    .from("sms_send_logs")
+    .select(
+      "id, campaign, campaign_key, recipient_id, manager_name, org_name, to_phone, message_id, status_code, status_label, status_message, outcome, sent_at"
+    )
+    .order("sent_at", { ascending: false })
+    .limit(query.limit ?? MAX_LOGS);
+
+  if (query.campaign) builder = builder.eq("campaign", query.campaign);
+  if (query.campaignKey) builder = builder.eq("campaign_key", query.campaignKey);
+  if (query.pendingOnly) builder = builder.eq("outcome", "pending");
+
+  const { data, error } = await builder;
+  if (error) {
+    console.warn("[sms_send_logs fetch]", error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row) => rowToEntry(row as SmsSendLogRow));
+}
+
 export async function appendSmsSendLog(
   supabase: SupabaseClient,
   entry: SmsSendLogEntry
@@ -196,4 +228,15 @@ export function filterSmsSendLogs(
   campaignKey: string
 ): SmsSendLogEntry[] {
   return logs.filter((e) => e.campaign === campaign && e.campaignKey === campaignKey);
+}
+
+export function mergeSmsSendLogsIntoCache(entries: SmsSendLogEntry[]): SmsSendLogEntry[] {
+  if (entries.length === 0) return logCache;
+  const byId = new Map<string, SmsSendLogEntry>();
+  for (const entry of logCache) byId.set(entry.id, entry);
+  for (const entry of entries) byId.set(entry.id, entry);
+  logCache = Array.from(byId.values())
+    .sort((a, b) => Date.parse(b.sentAt) - Date.parse(a.sentAt))
+    .slice(0, MAX_LOGS);
+  return logCache;
 }

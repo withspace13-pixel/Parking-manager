@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, startTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   PlusCircle,
@@ -124,6 +124,17 @@ export default function HomePage() {
   const lastRoomFetchForDateRef = useRef<string | null>(null);
   const roomByProjectIdCacheRef = useRef<Map<string, Record<string, string>>>(new Map());
 
+  const fetchProjectList = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("projects")
+      .select(
+        "id, org_name, manager, manager_phone, event_name, start_date, end_date, parking_support, free_cars_per_day, remarks, created_at, updated_at"
+      )
+      .order("start_date", { ascending: false });
+    if (error) throw error;
+    return normalizeProjectsFromApi((data || []) as Project[]);
+  }, []);
+
   useEffect(() => {
     if (isDevMode()) {
       setAllProjects(devStore.getProjects());
@@ -132,16 +143,12 @@ export default function HomePage() {
     setLoading(true);
     void (async () => {
       try {
-        const { data, error } = await supabase
-          .from("projects")
-          .select("*")
-          .order("start_date", { ascending: false });
-        if (!error) setAllProjects(normalizeProjectsFromApi((data || []) as Project[]));
+        setAllProjects(await fetchProjectList());
       } finally {
         setLoading(false);
       }
     })();
-  }, [devStore.data]);
+  }, [devStore.data, fetchProjectList]);
 
   const projectEffectiveEndYmd = useMemo(() => {
     const map: Record<string, string> = {};
@@ -188,11 +195,10 @@ export default function HomePage() {
         console.error("[보관함 자동 삭제]", error);
         return;
       }
-      const { data } = await supabase.from("projects").select("*").order("start_date", { ascending: false });
-      setAllProjects(normalizeProjectsFromApi((data || []) as Project[]));
+      setAllProjects(await fetchProjectList());
       setSelectedProjectId((prev) => (prev && ids.includes(prev) ? null : prev));
     })();
-  }, [allProjects, today, loading, devStore.data, projectEffectiveEndYmd]);
+  }, [allProjects, today, loading, devStore.data, projectEffectiveEndYmd, fetchProjectList]);
 
   useEffect(() => {
     if (sourceProjects.length === 0) {
@@ -452,8 +458,7 @@ export default function HomePage() {
         setAllProjects(devStore.getProjects());
       } else {
         await supabase.from("projects").delete().eq("id", projectId);
-        const { data } = await supabase.from("projects").select("*").order("start_date", { ascending: false });
-        setAllProjects(normalizeProjectsFromApi((data || []) as Project[]));
+        setAllProjects(await fetchProjectList());
       }
       setSelectedProjectId(null);
     } finally {

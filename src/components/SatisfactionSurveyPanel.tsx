@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, ClipboardList, PlusCircle, Send } from "lucide-react";
 import type { Project } from "@/lib/supabase";
 import { navigateToNewProject } from "@/lib/navigate";
@@ -111,6 +111,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
   const [pendingRecipientIds, setPendingRecipientIds] = useState<Set<string>>(() => new Set());
   const [managerContacts, setManagerContacts] = useState<ManagerContact[]>([]);
   const [builtinTemplateBody, setBuiltinTemplateBody] = useState("");
+  const loadedOverrideKeysRef = useRef<Set<string>>(new Set());
 
   const refreshBuiltinTemplate = useCallback(async () => {
     const body = await fetchBuiltinMessageTemplateBody(supabase, "survey");
@@ -142,12 +143,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
 
   useEffect(() => {
     void (async () => {
-      const [messages, fields] = await Promise.all([
-        fetchCampaignMessageOverrides(supabase, "survey"),
-        fetchSmsRecipientFieldOverrides(supabase, "survey"),
-      ]);
-      setBulkTemplates(messages.bulk);
-      setIndividualMessages(messages.individual);
+      const fields = await fetchSmsRecipientFieldOverrides(supabase, "survey");
       setOrgOverrides(fields.org);
       setManagerOverrides(fields.manager);
       setPhoneOverrides(fields.phone);
@@ -155,7 +151,20 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
   }, []);
 
   useEffect(() => {
-    void fetchRecipientSentIds(supabase, "survey", yearMonth).then(setSentIds);
+    void (async () => {
+      const [messages, sent] = await Promise.all([
+        loadedOverrideKeysRef.current.has(yearMonth)
+          ? Promise.resolve({ bulk: {}, individual: {} })
+          : fetchCampaignMessageOverrides(supabase, "survey", yearMonth),
+        fetchRecipientSentIds(supabase, "survey", yearMonth),
+      ]);
+      if (!loadedOverrideKeysRef.current.has(yearMonth)) {
+        loadedOverrideKeysRef.current.add(yearMonth);
+        setBulkTemplates((prev) => ({ ...prev, ...messages.bulk }));
+        setIndividualMessages((prev) => ({ ...prev, ...messages.individual }));
+      }
+      setSentIds(sent);
+    })();
     setIsEditing(false);
     setApplyFeedback(null);
     setListFilter("all");
@@ -341,6 +350,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     const template = deriveSurveyTemplateFromMessage(editDraft, params);
     try {
       const data = await applyBulkMessageOverride(supabase, "survey", yearMonth, template);
+      loadedOverrideKeysRef.current.add(yearMonth);
       setBulkTemplates(data.bulk);
       setIndividualMessages(data.individual);
       setIsEditing(false);
@@ -358,6 +368,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     if (!ok) return;
     try {
       await deleteBulkMessageOverride(supabase, "survey", yearMonth);
+      loadedOverrideKeysRef.current.add(yearMonth);
       const nextBulk = { ...bulkTemplates };
       delete nextBulk[yearMonth];
       setBulkTemplates(nextBulk);
@@ -390,6 +401,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
   const handleApplySavedTemplate = async (body: string) => {
     try {
       const data = await applyBulkMessageOverride(supabase, "survey", yearMonth, body);
+      loadedOverrideKeysRef.current.add(yearMonth);
       setBulkTemplates(data.bulk);
       setIndividualMessages(data.individual);
       setIsEditing(false);

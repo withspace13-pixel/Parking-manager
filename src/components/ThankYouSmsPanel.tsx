@@ -1,7 +1,7 @@
 "use client";
 
 // 감사문자 수동 발송·미리보기 (종료일 일 단위)
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, ClipboardList, PlusCircle, Send } from "lucide-react";
 import type { Project } from "@/lib/supabase";
 import { navigateToNewProject } from "@/lib/navigate";
@@ -111,6 +111,7 @@ export function ThankYouSmsPanel({ projects }: Props) {
   const [pendingRecipientIds, setPendingRecipientIds] = useState<Set<string>>(() => new Set());
   const [managerContacts, setManagerContacts] = useState<ManagerContact[]>([]);
   const [builtinTemplateBody, setBuiltinTemplateBody] = useState("");
+  const loadedOverrideKeysRef = useRef<Set<string>>(new Set());
 
   const refreshBuiltinTemplate = useCallback(async () => {
     const body = await fetchBuiltinMessageTemplateBody(supabase, "thank_you");
@@ -142,12 +143,7 @@ export function ThankYouSmsPanel({ projects }: Props) {
 
   useEffect(() => {
     void (async () => {
-      const [messages, fields] = await Promise.all([
-        fetchCampaignMessageOverrides(supabase, "thank_you"),
-        fetchSmsRecipientFieldOverrides(supabase, "thank_you"),
-      ]);
-      setBulkTemplates(messages.bulk);
-      setIndividualMessages(messages.individual);
+      const fields = await fetchSmsRecipientFieldOverrides(supabase, "thank_you");
       setOrgOverrides(fields.org);
       setManagerOverrides(fields.manager);
       setPhoneOverrides(fields.phone);
@@ -155,7 +151,20 @@ export function ThankYouSmsPanel({ projects }: Props) {
   }, []);
 
   useEffect(() => {
-    void fetchRecipientSentIds(supabase, "thank_you", targetDate).then(setSentIds);
+    void (async () => {
+      const [messages, sent] = await Promise.all([
+        loadedOverrideKeysRef.current.has(targetDate)
+          ? Promise.resolve({ bulk: {}, individual: {} })
+          : fetchCampaignMessageOverrides(supabase, "thank_you", targetDate),
+        fetchRecipientSentIds(supabase, "thank_you", targetDate),
+      ]);
+      if (!loadedOverrideKeysRef.current.has(targetDate)) {
+        loadedOverrideKeysRef.current.add(targetDate);
+        setBulkTemplates((prev) => ({ ...prev, ...messages.bulk }));
+        setIndividualMessages((prev) => ({ ...prev, ...messages.individual }));
+      }
+      setSentIds(sent);
+    })();
     setIsEditing(false);
     setApplyFeedback(null);
     setListFilter("all");
@@ -341,6 +350,7 @@ export function ThankYouSmsPanel({ projects }: Props) {
     const template = deriveThankYouTemplateFromMessage(editDraft, params);
     try {
       const data = await applyBulkMessageOverride(supabase, "thank_you", targetDate, template);
+      loadedOverrideKeysRef.current.add(targetDate);
       setBulkTemplates(data.bulk);
       setIndividualMessages(data.individual);
       setIsEditing(false);
@@ -358,6 +368,7 @@ export function ThankYouSmsPanel({ projects }: Props) {
     if (!ok) return;
     try {
       await deleteBulkMessageOverride(supabase, "thank_you", targetDate);
+      loadedOverrideKeysRef.current.add(targetDate);
       const nextBulk = { ...bulkTemplates };
       delete nextBulk[targetDate];
       setBulkTemplates(nextBulk);
@@ -390,6 +401,7 @@ export function ThankYouSmsPanel({ projects }: Props) {
   const handleApplySavedTemplate = async (body: string) => {
     try {
       const data = await applyBulkMessageOverride(supabase, "thank_you", targetDate, body);
+      loadedOverrideKeysRef.current.add(targetDate);
       setBulkTemplates(data.bulk);
       setIndividualMessages(data.individual);
       setIsEditing(false);

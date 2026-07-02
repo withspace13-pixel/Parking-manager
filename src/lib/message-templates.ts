@@ -113,9 +113,20 @@ export async function fetchBuiltinMessageTemplateBody(
   supabase: SupabaseClient,
   campaign: MessageTemplateCampaign
 ): Promise<string> {
-  const templates = await fetchMessageTemplates(supabase, campaign);
-  const builtin = templates.find((t) => t.name === BUILTIN_MESSAGE_TEMPLATE_NAME[campaign]);
-  return builtin?.body.trim() || SEED_TEMPLATE_BODY[campaign];
+  await ensureBuiltinMessageTemplates(supabase, campaign);
+  const { data, error } = await supabase
+    .from("message_templates")
+    .select("body")
+    .eq("campaign", campaign)
+    .eq("name", BUILTIN_MESSAGE_TEMPLATE_NAME[campaign])
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[message_templates builtin]", error.message);
+    return SEED_TEMPLATE_BODY[campaign];
+  }
+
+  return String(data?.body ?? "").trim() || SEED_TEMPLATE_BODY[campaign];
 }
 
 export function suggestNewTemplateName(templateCount: number): string {

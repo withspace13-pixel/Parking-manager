@@ -34,12 +34,17 @@ function rowsToOverrides(rows: OverrideRow[]): CampaignMessageOverrides {
 
 export async function fetchCampaignMessageOverrides(
   supabase: SupabaseClient,
-  campaign: MessageTemplateCampaign
+  campaign: MessageTemplateCampaign,
+  campaignKey?: string
 ): Promise<CampaignMessageOverrides> {
-  const { data, error } = await supabase
+  let builder = supabase
     .from("campaign_message_overrides")
     .select("campaign_key, recipient_id, body")
     .eq("campaign", campaign);
+
+  if (campaignKey) builder = builder.eq("campaign_key", campaignKey);
+
+  const { data, error } = await builder;
 
   if (error) {
     console.warn("[campaign_message_overrides fetch]", error.message);
@@ -132,5 +137,5 @@ export async function applyBulkMessageOverride(
 ): Promise<CampaignMessageOverrides> {
   await upsertBulkMessageOverride(supabase, campaign, campaignKey, body);
   await clearIndividualMessageOverrides(supabase, campaign, campaignKey);
-  return fetchCampaignMessageOverrides(supabase, campaign);
+  return fetchCampaignMessageOverrides(supabase, campaign, campaignKey);
 }

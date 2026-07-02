@@ -3,13 +3,15 @@ import { supabase } from "@/lib/supabase";
 import { refreshMessageStatusesViaApi } from "@/lib/send-message-client";
 import { addRecipientSentId, fetchRecipientSentIds } from "@/lib/recipient-sent-storage";
 import {
+  fetchSmsSendLogs,
   getSmsSendLogsCache,
-  refreshSmsSendLogsCache,
+  mergeSmsSendLogsIntoCache,
   updateSmsSendLog,
   type SmsCampaign,
 } from "@/lib/sms-send-log";
 
-const POLL_MS = 2000;
+const POLL_MS = 10_000;
+const POLL_MAX_MS = 60_000;
 
 type TrackerListener = () => void;
 
@@ -17,6 +19,7 @@ const listeners = new Set<TrackerListener>();
 let timer: ReturnType<typeof setInterval> | null = null;
 let ticking = false;
 let visibilityBound = false;
+let pollingStartedAt = 0;
 
 function notifyListeners() {
   listeners.forEach((listener) => listener());
@@ -35,6 +38,7 @@ function bindVisibility() {
 function ensureTimer() {
   if (timer) return;
   bindVisibility();
+  pollingStartedAt = Date.now();
   timer = setInterval(() => void tick(), POLL_MS);
 }
 
@@ -43,15 +47,21 @@ function stopTimerIfIdle() {
   if (!hasPending && timer) {
     clearInterval(timer);
     timer = null;
+    pollingStartedAt = 0;
   }
 }
 
 async function tick() {
   if (ticking) return;
 
-  await refreshSmsSendLogsCache(supabase);
+  const fetchedPending = await fetchSmsSendLogs(supabase, { pendingOnly: true, limit: 30 });
+  mergeSmsSendLogsIntoCache(fetchedPending);
   const pending = getSmsSendLogsCache().filter((e) => e.outcome === "pending" && e.messageId);
   if (pending.length === 0) {
+    stopTimerIfIdle();
+    return;
+  }
+  if (pollingStartedAt && Date.now() - pollingStartedAt > POLL_MAX_MS) {
     stopTimerIfIdle();
     return;
   }
@@ -96,7 +106,8 @@ async function tick() {
 }
 
 export async function ensureSmsPendingTracker(): Promise<void> {
-  await refreshSmsSendLogsCache(supabase);
+  const fetchedPending = await fetchSmsSendLogs(supabase, { pendingOnly: true, limit: 30 });
+  mergeSmsSendLogsIntoCache(fetchedPending);
   const hasPending = getSmsSendLogsCache().some((e) => e.outcome === "pending" && e.messageId);
   if (hasPending) {
     ensureTimer();
