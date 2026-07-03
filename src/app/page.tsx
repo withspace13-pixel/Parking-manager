@@ -331,7 +331,7 @@ export default function HomePage() {
         const primary: Record<string, string> = {};
         allProjects.forEach((p) => {
           const rooms = roomsByProject[p.id] ?? [];
-          const effectiveEnd = projectEffectiveEndYmd[p.id] ?? getProjectEffectiveEndYmd(p, rooms);
+          const effectiveEnd = getProjectEffectiveEndYmd(p, rooms);
           const dates = getProjectPeriodDatesForDisplay(rooms, effectiveEnd, today);
           primary[p.id] = getPrimaryDashboardDateFromRooms(rooms, p.end_date);
           if (dates.length > 0) {
@@ -348,7 +348,7 @@ export default function HomePage() {
         setRoomsByProjectId(roomsByProject);
         setPrimaryRoomDateByProjectId(primary);
       });
-  }, [allProjects, devStore.data, today, projectEffectiveEndYmd]);
+  }, [allProjects, devStore.data, today]);
 
   const projectsForDate = useMemo(() => {
     // 해당 일자에 project_rooms가 존재하는 행사만 표시 (띄엄띄엄 일정 지원)
