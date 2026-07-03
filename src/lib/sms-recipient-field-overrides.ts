@@ -15,7 +15,19 @@ type FieldRow = {
   phone: string | null;
 };
 
-export async function fetchSmsRecipientFieldOverrides(
+const overridesCache: Partial<Record<MessageTemplateCampaign, SmsRecipientFieldOverrides>> = {};
+const overridesFetchPromise: Partial<
+  Record<MessageTemplateCampaign, Promise<SmsRecipientFieldOverrides>>
+> = {};
+
+export function invalidateSmsRecipientFieldOverridesCache(
+  campaign: MessageTemplateCampaign
+): void {
+  delete overridesCache[campaign];
+  delete overridesFetchPromise[campaign];
+}
+
+async function loadSmsRecipientFieldOverrides(
   supabase: SupabaseClient,
   campaign: MessageTemplateCampaign
 ): Promise<SmsRecipientFieldOverrides> {
@@ -26,7 +38,7 @@ export async function fetchSmsRecipientFieldOverrides(
 
   if (error) {
     console.warn("[sms_recipient_field_overrides fetch]", error.message);
-    return { org: {}, manager: {}, phone: {} };
+    return overridesCache[campaign] ?? { org: {}, manager: {}, phone: {} };
   }
 
   const org: Record<string, string> = {};
@@ -39,7 +51,25 @@ export async function fetchSmsRecipientFieldOverrides(
     if (row.phone?.trim()) phone[row.recipient_id] = row.phone.trim();
   }
 
-  return { org, manager, phone };
+  const result = { org, manager, phone };
+  overridesCache[campaign] = result;
+  return result;
+}
+
+/** 발송 전 필드 수정값 — 캠페인별 세션 캐시, 저장 시에만 재조회 */
+export async function fetchSmsRecipientFieldOverrides(
+  supabase: SupabaseClient,
+  campaign: MessageTemplateCampaign
+): Promise<SmsRecipientFieldOverrides> {
+  const cached = overridesCache[campaign];
+  if (cached) return cached;
+  const pending = overridesFetchPromise[campaign];
+  if (pending) return pending;
+  const promise = loadSmsRecipientFieldOverrides(supabase, campaign).finally(() => {
+    delete overridesFetchPromise[campaign];
+  });
+  overridesFetchPromise[campaign] = promise;
+  return promise;
 }
 
 export async function upsertSmsRecipientFieldOverride(
@@ -73,6 +103,7 @@ export async function upsertSmsRecipientFieldOverride(
       .eq("campaign", campaign)
       .eq("recipient_id", recipientId);
     if (deleteError) throw new Error(deleteError.message);
+    invalidateSmsRecipientFieldOverridesCache(campaign);
     return;
   }
 
@@ -88,4 +119,5 @@ export async function upsertSmsRecipientFieldOverride(
     { onConflict: "campaign,recipient_id" }
   );
   if (error) throw new Error(error.message || "담당자 정보 저장에 실패했습니다.");
+  invalidateSmsRecipientFieldOverridesCache(campaign);
 }

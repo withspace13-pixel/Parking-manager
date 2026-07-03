@@ -59,6 +59,16 @@ function sortTemplates(templates: SavedMessageTemplate[]): SavedMessageTemplate[
   return [...templates].sort((a, b) => a.name.localeCompare(b.name, "ko"));
 }
 
+const templatesCache: Partial<Record<MessageTemplateCampaign, SavedMessageTemplate[]>> = {};
+const templatesFetchPromise: Partial<
+  Record<MessageTemplateCampaign, Promise<SavedMessageTemplate[]>>
+> = {};
+
+export function invalidateMessageTemplatesCache(campaign: MessageTemplateCampaign): void {
+  delete templatesCache[campaign];
+  delete templatesFetchPromise[campaign];
+}
+
 async function ensureBuiltinMessageTemplates(
   supabase: SupabaseClient,
   campaign: MessageTemplateCampaign
@@ -89,7 +99,7 @@ async function ensureBuiltinMessageTemplates(
   if (insertError) console.warn("[message_templates ensure insert]", insertError.message);
 }
 
-export async function fetchMessageTemplates(
+async function loadMessageTemplates(
   supabase: SupabaseClient,
   campaign: MessageTemplateCampaign
 ): Promise<SavedMessageTemplate[]> {
@@ -103,30 +113,37 @@ export async function fetchMessageTemplates(
 
   if (error) {
     console.warn("[message_templates fetch]", error.message);
-    return [];
+    return templatesCache[campaign] ?? [];
   }
 
-  return sortTemplates((data ?? []).map((row) => rowToSaved(row as MessageTemplateRow)));
+  const list = sortTemplates((data ?? []).map((row) => rowToSaved(row as MessageTemplateRow)));
+  templatesCache[campaign] = list;
+  return list;
+}
+
+/** 문구 템플릿 목록 — 캠페인별 세션 캐시, 변경 시에만 재조회 */
+export async function fetchMessageTemplates(
+  supabase: SupabaseClient,
+  campaign: MessageTemplateCampaign
+): Promise<SavedMessageTemplate[]> {
+  const cached = templatesCache[campaign];
+  if (cached) return cached;
+  const pending = templatesFetchPromise[campaign];
+  if (pending) return pending;
+  const promise = loadMessageTemplates(supabase, campaign).finally(() => {
+    delete templatesFetchPromise[campaign];
+  });
+  templatesFetchPromise[campaign] = promise;
+  return promise;
 }
 
 export async function fetchBuiltinMessageTemplateBody(
   supabase: SupabaseClient,
   campaign: MessageTemplateCampaign
 ): Promise<string> {
-  await ensureBuiltinMessageTemplates(supabase, campaign);
-  const { data, error } = await supabase
-    .from("message_templates")
-    .select("body")
-    .eq("campaign", campaign)
-    .eq("name", BUILTIN_MESSAGE_TEMPLATE_NAME[campaign])
-    .maybeSingle();
-
-  if (error) {
-    console.warn("[message_templates builtin]", error.message);
-    return SEED_TEMPLATE_BODY[campaign];
-  }
-
-  return String(data?.body ?? "").trim() || SEED_TEMPLATE_BODY[campaign];
+  const list = await fetchMessageTemplates(supabase, campaign);
+  const builtin = list.find((t) => t.name === BUILTIN_MESSAGE_TEMPLATE_NAME[campaign]);
+  return String(builtin?.body ?? "").trim() || SEED_TEMPLATE_BODY[campaign];
 }
 
 export function suggestNewTemplateName(templateCount: number): string {
@@ -167,6 +184,7 @@ export async function createMessageTemplate(
     throw new Error(error.message || "템플릿 저장에 실패했습니다.");
   }
 
+  invalidateMessageTemplatesCache(campaign);
   return rowToSaved(data as MessageTemplateRow);
 }
 
@@ -212,6 +230,7 @@ export async function updateMessageTemplate(
     throw new Error(error.message || "템플릿 수정에 실패했습니다.");
   }
 
+  invalidateMessageTemplatesCache(campaign);
   return rowToSaved(data as MessageTemplateRow);
 }
 
@@ -235,5 +254,6 @@ export async function deleteMessageTemplate(
 
   const { error } = await supabase.from("message_templates").delete().eq("id", id).eq("campaign", campaign);
   if (error) throw new Error(error.message || "템플릿 삭제에 실패했습니다.");
+  invalidateMessageTemplatesCache(campaign);
   return true;
 }
