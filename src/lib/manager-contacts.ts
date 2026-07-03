@@ -74,7 +74,29 @@ export function buildManagerContactsFromProjects(projects: Project[]): ManagerCo
   return mergeManagerContacts(items);
 }
 
-export async function fetchManagerContacts(
+let contactsCache: ManagerContact[] | null = null;
+let contactsFetchPromise: Promise<ManagerContact[]> | null = null;
+
+export function getManagerContactsCache(): ManagerContact[] | null {
+  return contactsCache;
+}
+
+export function invalidateManagerContactsCache(): void {
+  contactsCache = null;
+  contactsFetchPromise = null;
+}
+
+function setManagerContactsCache(contacts: ManagerContact[]): ManagerContact[] {
+  contactsCache = contacts;
+  return contacts;
+}
+
+function mergeIntoManagerContactsCache(...lists: ManagerContact[][]): ManagerContact[] {
+  const merged = mergeManagerContacts(contactsCache ?? [], ...lists);
+  return setManagerContactsCache(merged);
+}
+
+async function loadManagerContactsFromRemote(
   supabase: SupabaseClient
 ): Promise<ManagerContact[]> {
   const { data, error } = await supabase
@@ -83,21 +105,43 @@ export async function fetchManagerContacts(
     .order("name");
   if (error) {
     console.warn("[manager_contacts]", error.message);
-    return [];
+    return contactsCache ?? [];
   }
-  return mergeManagerContacts(
-    (data ?? [])
-      .map((row) =>
-        normalizeContact({
-          id: row.id,
-          name: row.name,
-          org_name: row.org_name,
-          phone: row.phone,
-          updated_at: row.updated_at,
-        })
-      )
-      .filter((c): c is ManagerContact => Boolean(c))
+  return setManagerContactsCache(
+    mergeManagerContacts(
+      (data ?? [])
+        .map((row) =>
+          normalizeContact({
+            id: row.id,
+            name: row.name,
+            org_name: row.org_name,
+            phone: row.phone,
+            updated_at: row.updated_at,
+          })
+        )
+        .filter((c): c is ManagerContact => Boolean(c))
+    )
   );
+}
+
+/** 담당자 연락처 마스터 — 세션당 1회만 Supabase 조회, 이후 메모리 캐시 */
+export async function fetchManagerContacts(
+  supabase: SupabaseClient
+): Promise<ManagerContact[]> {
+  if (contactsCache !== null) return contactsCache;
+  if (contactsFetchPromise) return contactsFetchPromise;
+  contactsFetchPromise = loadManagerContactsFromRemote(supabase).finally(() => {
+    contactsFetchPromise = null;
+  });
+  return contactsFetchPromise;
+}
+
+/** 캐시 무효화 후 Supabase에서 다시 불러오기 */
+export async function refreshManagerContactsCache(
+  supabase: SupabaseClient
+): Promise<ManagerContact[]> {
+  invalidateManagerContactsCache();
+  return fetchManagerContacts(supabase);
 }
 
 export async function upsertManagerContactRemote(
@@ -241,5 +285,9 @@ export function persistManagerContact(input: {
     updated_at: new Date().toISOString(),
   });
   if (!normalized) return input.contacts;
-  return mergeManagerContacts(input.contacts, [normalized]);
+  const merged = mergeManagerContacts(input.contacts, [normalized]);
+  if (contactsCache !== null) {
+    mergeIntoManagerContactsCache([normalized]);
+  }
+  return merged;
 }
