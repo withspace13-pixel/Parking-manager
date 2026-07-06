@@ -1,5 +1,5 @@
 /** 보관함(행사 종료) 데이터를 며칠 보관한 뒤 자동 삭제할지 */
-export const ARCHIVE_RETENTION_DAYS = 30;
+export const ARCHIVE_RETENTION_DAYS = 90;
 
 /** YYYY-MM-DD + n일 (로컬 달력 기준) */
 export function addDaysToYmd(ymd: string, days: number): string {
@@ -15,7 +15,7 @@ export function addDaysToYmd(ymd: string, days: number): string {
 
 /**
  * 행사 종료일(end_date) 이후 ARCHIVE_RETENTION_DAYS일이 지난 행사 → DB/로컬에서 삭제
- * (보관함에 올라간 뒤 30일이 지난 것으로 간주)
+ * (보관함에 올라간 뒤 90일이 지난 것으로 간주)
  */
 export function isArchivedProjectExpiredForPurge(endDateYmd: string, todayYmd: string): boolean {
   const end = String(endDateYmd).slice(0, 10);

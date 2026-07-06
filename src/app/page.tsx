@@ -174,7 +174,7 @@ export default function HomePage() {
   );
   const sourceProjects = dashboardTab === "active" ? activeProjects : dashboardTab === "archive" ? archivedProjects : [];
 
-  /** 보관함(행사 종료) 항목: 종료일 기준 30일 경과 시 자동 삭제 — 대시보드 방문 시 실행 */
+  /** 보관함(행사 종료) 항목: 종료일 기준 90일 경과 시 자동 삭제 — 대시보드 방문 시 실행 */
   useEffect(() => {
     const expired = allProjects.filter((p) =>
       isArchivedProjectExpiredForPurge(projectEffectiveEndYmd[p.id] ?? String(p.end_date).slice(0, 10), today)
