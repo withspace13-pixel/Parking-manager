@@ -8,9 +8,14 @@ import {
   type ManagerContact,
 } from "@/lib/manager-contacts";
 import {
+  applyMessageTemplateTokens,
+  buildMessageTemplateReplacements,
+  deriveMessageTemplateFromReplacements,
+  formatMessageDayLabel,
+} from "@/lib/message-template-variables";
+import {
   estimateMessageType,
   formatProjectEventDateLabel,
-  formatSurveyEventLines,
   getSurveyRecipientGroupKey,
   resolveRecipientPhone,
   resolveRecipientSendStatus,
@@ -38,8 +43,7 @@ export function defaultThankYouTargetDate(): string {
 }
 
 export function formatThankYouCampaignDayLabel(ymd: string): string {
-  const [, m, d] = String(ymd).slice(0, 10).split("-");
-  return `${Number(m)}월 ${Number(d)}일`;
+  return formatMessageDayLabel(ymd);
 }
 
 export type ThankYouMessageBuildParams = {
@@ -49,7 +53,7 @@ export type ThankYouMessageBuildParams = {
   events: ThankYouRecipientEvent[];
 };
 
-/** 일괄 적용용: {담당자} {기관명} {일자} {행사목록} */
+/** 일괄 적용용 치환 변수 — 감사문자·만족도 조사 공통 */
 export const DEFAULT_THANK_YOU_MESSAGE_TEMPLATE = `{담당자}님, 안녕하세요. 위드스페이스입니다.^^
 {일자} 진행하신 행사 이용해 주셔서 진심으로 감사드립니다.
 
@@ -58,32 +62,34 @@ export const DEFAULT_THANK_YOU_MESSAGE_TEMPLATE = `{담당자}님, 안녕하세�
 
 앞으로도 위드스페이스를 이용해 주시면 감사하겠습니다.`;
 
+export function thankYouMessageTemplateReplacements(
+  params: ThankYouMessageBuildParams
+): Record<string, string> {
+  const yearMonth = String(params.targetDate).slice(0, 7);
+  return buildMessageTemplateReplacements({
+    displayOrgName: params.displayOrgName,
+    manager: params.manager,
+    events: params.events,
+    yearMonth,
+    dayLabel: formatThankYouCampaignDayLabel(params.targetDate),
+  });
+}
+
 export function renderThankYouMessageTemplate(
   template: string,
   params: ThankYouMessageBuildParams
 ): string {
-  return template
-    .replaceAll("{기관명}", params.displayOrgName)
-    .replaceAll("{담당자}", params.manager)
-    .replaceAll("{일자}", formatThankYouCampaignDayLabel(params.targetDate))
-    .replaceAll("{행사목록}", formatSurveyEventLines(params.events));
+  return applyMessageTemplateTokens(template, thankYouMessageTemplateReplacements(params));
 }
 
 export function deriveThankYouTemplateFromMessage(
   body: string,
   sample: ThankYouMessageBuildParams
 ): string {
-  let t = body;
-  const pairs: Array<[string, string]> = [
-    [sample.displayOrgName, "{기관명}"],
-    [sample.manager, "{담당자}"],
-    [formatThankYouCampaignDayLabel(sample.targetDate), "{일자}"],
-    [formatSurveyEventLines(sample.events), "{행사목록}"],
-  ];
-  for (const [from, to] of pairs) {
-    if (from) t = t.split(from).join(to);
-  }
-  return t;
+  return deriveMessageTemplateFromReplacements(
+    body,
+    thankYouMessageTemplateReplacements(sample)
+  );
 }
 
 export function buildThankYouMessage(
@@ -126,7 +132,7 @@ export function groupProjectsIntoThankYouRecipients(
       : undefined;
 
   for (const p of filtered) {
-    const id = getSurveyRecipientGroupKey(p);
+    const id = getSurveyRecipientGroupKey(p, managerContacts, phoneIndex);
     const phone = resolveProjectManagerPhone(p, managerContacts, phoneIndex);
     const event: ThankYouRecipientEvent = {
       projectId: p.id,

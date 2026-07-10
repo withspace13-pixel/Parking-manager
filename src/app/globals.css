@@ -192,6 +192,18 @@
   .report-table-compact tbody td {
     padding: 0.65rem 0.9rem;
   }
+
+  /* 공개 설문 페이지 — 로고 주황 테마 */
+  .survey-public-theme {
+    --primary: #f26522;
+    --primary-hover: #d95518;
+  }
+  .survey-public-theme .btn-primary {
+    box-shadow: 0 10px 24px -16px rgba(242, 101, 34, 0.55);
+  }
+  .survey-public-theme .btn-primary:hover {
+    box-shadow: 0 14px 28px -18px rgba(242, 101, 34, 0.65);
+  }
 }
 
 /* Tailwind 기본 글자 단계 상향(가독성 개선) */

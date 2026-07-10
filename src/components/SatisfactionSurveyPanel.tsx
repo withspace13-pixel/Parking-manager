@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, ClipboardList, PlusCircle, Send } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, ClipboardList, ExternalLink, PlusCircle, Send } from "lucide-react";
 import type { Project } from "@/lib/supabase";
 import { navigateToNewProject } from "@/lib/navigate";
 import { supabase } from "@/lib/supabase";
@@ -50,6 +50,16 @@ import {
   type SurveyMessageBuildParams,
   type SurveyRecipient,
 } from "@/lib/survey-messaging";
+import { freezeInviteSnapshot } from "@/lib/survey/survey-form-snapshot";
+import {
+  fetchSurveyQuestionTemplateSummaries,
+  type SurveyQuestionTemplateSummary,
+} from "@/lib/survey/survey-question-templates";
+import { SurveySendTemplatePicker } from "@/components/survey/SurveySendTemplatePicker";
+import {
+  ensureSurveyInvitesForRecipients,
+} from "@/lib/survey/survey-invites";
+import { buildSurveyPreviewUrl, buildSurveyPublicUrl } from "@/lib/survey/survey-url";
 
 type Props = {
   projects: Project[];
@@ -69,17 +79,45 @@ function filterChipClass(active: boolean, base: string) {
     : `${base} hover:opacity-90`;
 }
 
+function sendSurveyTemplateStorageKey(campaignKey: string) {
+  return `parking-manager-survey-send-template:${campaignKey}`;
+}
+
+function readStoredSendTemplateId(campaignKey: string): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return sessionStorage.getItem(sendSurveyTemplateStorageKey(campaignKey)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredSendTemplateId(campaignKey: string, id: string) {
+  if (typeof window === "undefined") return;
+  try {
+    if (id) {
+      sessionStorage.setItem(sendSurveyTemplateStorageKey(campaignKey), id);
+    } else {
+      sessionStorage.removeItem(sendSurveyTemplateStorageKey(campaignKey));
+    }
+  } catch {
+    // ignore
+  }
+}
+
 function buildParams(
   recipient: SurveyRecipient,
   yearMonth: string,
   displayOrg: string,
-  displayManager: string
+  displayManager: string,
+  surveyUrl?: string
 ): SurveyMessageBuildParams {
   return {
     displayOrgName: displayOrg,
     manager: displayManager,
     yearMonth,
     events: recipient.events,
+    surveyUrl,
   };
 }
 
@@ -111,7 +149,16 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
   const [pendingRecipientIds, setPendingRecipientIds] = useState<Set<string>>(() => new Set());
   const [managerContacts, setManagerContacts] = useState<ManagerContact[]>([]);
   const [builtinTemplateBody, setBuiltinTemplateBody] = useState("");
+  const [surveyUrls, setSurveyUrls] = useState<Record<string, string>>({});
+  const [sendTemplateSummaries, setSendTemplateSummaries] = useState<
+    SurveyQuestionTemplateSummary[]
+  >([]);
+  const [sendTemplateId, setSendTemplateId] = useState("");
+  const [sendTemplateOverrides, setSendTemplateOverrides] = useState<
+    Record<string, Record<string, string>>
+  >({});
   const loadedOverrideKeysRef = useRef<Set<string>>(new Set());
+  const previewPanelRef = useRef<HTMLDivElement>(null);
 
   const refreshBuiltinTemplate = useCallback(async () => {
     const body = await fetchBuiltinMessageTemplateBody(supabase, "survey");
@@ -121,6 +168,39 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
   useEffect(() => {
     void refreshBuiltinTemplate();
   }, [refreshBuiltinTemplate]);
+
+  useEffect(() => {
+    void (async () => {
+      const summaries = await fetchSurveyQuestionTemplateSummaries(supabase);
+      setSendTemplateSummaries(summaries);
+      const stored = readStoredSendTemplateId(yearMonth);
+      const validStored = stored && summaries.some((t) => t.id === stored);
+      const builtin = summaries.find((t) => t.isBuiltin);
+      setSendTemplateId(validStored ? stored : (builtin?.id ?? summaries[0]?.id ?? ""));
+    })();
+  }, [yearMonth]);
+
+  const resolveSendTemplateId = useCallback(
+    (recipientId: string) => sendTemplateOverrides[yearMonth]?.[recipientId] ?? sendTemplateId,
+    [sendTemplateOverrides, yearMonth, sendTemplateId]
+  );
+
+  const resolveSendTemplateName = useCallback(
+    (recipientId: string) => {
+      const id = resolveSendTemplateId(recipientId);
+      return sendTemplateSummaries.find((t) => t.id === id)?.name ?? "선택된 템플릿";
+    },
+    [resolveSendTemplateId, sendTemplateSummaries]
+  );
+
+  const handleSendTemplateChange = (recipientId: string, id: string) => {
+    setSendTemplateOverrides((prev) => ({
+      ...prev,
+      [yearMonth]: { ...prev[yearMonth], [recipientId]: id },
+    }));
+    setSendTemplateId(id);
+    writeStoredSendTemplateId(yearMonth, id);
+  };
 
   useSmsPendingSync({
     campaign: "survey",
@@ -195,6 +275,11 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     return sortedDisplayRecipients.filter((r) => r.sendStatus === listFilter);
   }, [sortedDisplayRecipients, listFilter]);
 
+  const recipientIdsKey = useMemo(
+    () => sortedDisplayRecipients.map((r) => r.id).sort().join("|"),
+    [sortedDisplayRecipients]
+  );
+
   useEffect(() => {
     if (filteredRecipients.length === 0) {
       setSelectedId(null);
@@ -226,9 +311,43 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     ? (individualMessages[yearMonth]?.[selected.id] ?? null)
     : null;
 
+  useEffect(() => {
+    if (sortedDisplayRecipients.length === 0) {
+      setSurveyUrls({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const map = await ensureSurveyInvitesForRecipients(
+        supabase,
+        yearMonth,
+        sortedDisplayRecipients.map((r) => ({
+          id: r.id,
+          managerName: managerOverrides[r.id] ?? r.manager,
+          orgName: orgOverrides[r.id] ?? r.displayOrgName,
+        }))
+      );
+      if (cancelled) return;
+      const urls: Record<string, string> = {};
+      map.forEach((inv, recipientId) => {
+        urls[recipientId] = buildSurveyPublicUrl(inv.token);
+      });
+      setSurveyUrls(urls);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [yearMonth, recipientIdsKey]);
+
   const resolveBody = useCallback(
-    (recipient: SurveyRecipient, org: string, manager: string) => {
-      const params = buildParams(recipient, yearMonth, org, manager);
+    (recipient: SurveyRecipient, org: string, manager: string, surveyUrl?: string) => {
+      const params = buildParams(
+        recipient,
+        yearMonth,
+        org,
+        manager,
+        surveyUrl ?? surveyUrls[recipient.id]
+      );
       const individual = individualMessages[yearMonth]?.[recipient.id] ?? null;
       return resolveSurveyMessageBody(params, {
         individualBody: individual,
@@ -236,7 +355,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
         defaultTemplate: builtinTemplateBody,
       });
     },
-    [yearMonth, individualMessages, bulkTemplates, builtinTemplateBody]
+    [yearMonth, individualMessages, bulkTemplates, builtinTemplateBody, surveyUrls]
   );
 
   const previewBody = useMemo(() => {
@@ -398,6 +517,8 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     previewBody,
   ]);
 
+  const trackedTemplateBody = getTemplateBodyForSave();
+
   const handleApplySavedTemplate = async (body: string) => {
     try {
       const data = await applyBulkMessageOverride(supabase, "survey", yearMonth, body);
@@ -410,11 +531,69 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     }
   };
 
+  const handleSurveyPreview = async () => {
+    if (!selected) return;
+    const templateId = resolveSendTemplateId(selected.id);
+    if (!templateId) {
+      alert("미리볼 설문 템플릿을 선택해 주세요.");
+      return;
+    }
+    const org = orgOverrides[selected.id] ?? selected.displayOrgName;
+    const manager = managerOverrides[selected.id] ?? selected.manager;
+    let inviteToken = "";
+    const existingUrl = surveyUrls[selected.id];
+    if (existingUrl) {
+      inviteToken = existingUrl.split("/").filter(Boolean).pop()?.split("?")[0] ?? "";
+    }
+    if (!inviteToken) {
+      const map = await ensureSurveyInvitesForRecipients(supabase, yearMonth, [
+        { id: selected.id, managerName: manager, orgName: org },
+      ]);
+      const invite = map.get(selected.id);
+      if (!invite) {
+        alert("설문 링크를 만들지 못했습니다.");
+        return;
+      }
+      inviteToken = invite.token;
+      setSurveyUrls((prev) => ({
+        ...prev,
+        [selected.id]: buildSurveyPublicUrl(invite.token),
+      }));
+    }
+    window.open(buildSurveyPreviewUrl(inviteToken, templateId), "_blank", "noopener,noreferrer");
+  };
+
   const handleSend = async (recipient: SurveyRecipient) => {
     if (recipient.sendStatus !== "pending") return;
     const org = orgOverrides[recipient.id] ?? recipient.displayOrgName;
     const manager = managerOverrides[recipient.id] ?? recipient.manager;
-    const preview = resolveBody(recipient, org, manager);
+    let surveyUrl = surveyUrls[recipient.id];
+    let inviteToken = "";
+    if (!surveyUrl) {
+      const map = await ensureSurveyInvitesForRecipients(supabase, yearMonth, [
+        {
+          id: recipient.id,
+          managerName: manager,
+          orgName: org,
+        },
+      ]);
+      const invite = map.get(recipient.id);
+      if (!invite) throw new Error("설문 링크를 만들지 못했습니다.");
+      inviteToken = invite.token;
+      surveyUrl = buildSurveyPublicUrl(invite.token);
+      setSurveyUrls((prev) => ({ ...prev, [recipient.id]: surveyUrl }));
+    } else {
+      inviteToken = surveyUrl.split("/").filter(Boolean).pop() ?? "";
+    }
+    if (inviteToken) {
+      const templateId = resolveSendTemplateId(recipient.id);
+      if (!templateId) {
+        alert("발송할 설문 템플릿을 선택해 주세요.");
+        return;
+      }
+      await freezeInviteSnapshot(supabase, inviteToken, { templateId });
+    }
+    const preview = resolveBody(recipient, org, manager, surveyUrl);
     const phone = resolveRecipientPhone(recipient, phoneOverrides);
     if (!phone) {
       alert("연락처가 없어 발송할 수 없습니다.");
@@ -427,8 +606,9 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
       return;
     }
     const msgType = estimateMessageType(preview);
+    const templateLabel = resolveSendTemplateName(recipient.id);
     const ok = confirm(
-      `${manager} 님(${formatManagerPhoneDisplay(phone)})에게 만족도 조사 문자를 발송할까요?\n\n(${msgType} · 솔라피 실발송)`
+      `${manager} 님(${formatManagerPhoneDisplay(phone)})에게 만족도 조사 문자를 발송할까요?\n\n설문: ${templateLabel}\n(${msgType} · 솔라피 실발송)`
     );
     if (!ok) return;
     setSendingId(recipient.id);
@@ -835,7 +1015,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
                 <p className="mt-2 text-xs font-medium text-emerald-700">{applyFeedback}</p>
               )}
             </div>
-            <div className="flex flex-1 flex-col p-4">
+            <div ref={previewPanelRef} className="flex flex-1 flex-col p-4">
               {!selected ? (
                 <p className="text-sm text-[var(--text-muted)]">담당자를 선택하세요.</p>
               ) : (
@@ -843,6 +1023,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
                   <MessageTemplateControls
                     campaign="survey"
                     getTemplateBody={getTemplateBodyForSave}
+                    trackedTemplateBody={trackedTemplateBody}
                     onApplyTemplate={handleApplySavedTemplate}
                     onFeedback={showFeedback}
                     onTemplatesChanged={refreshBuiltinTemplate}
@@ -867,7 +1048,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
                       />
                     </label>
                   </div>
-                  <div className="mb-3">
+                  <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block text-xs font-medium text-[var(--text-muted)]">
                       담당자 연락처 (발송 전 수정)
                       <input
@@ -878,12 +1059,37 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
                         className="input mt-1 w-full px-3 py-2 text-sm"
                       />
                     </label>
-                    {!displayPhone && (
-                      <p className="mt-1 text-xs text-amber-800">
-                        연락처가 없어 발송할 수 없습니다. 번호를 직접 입력해 주세요.
-                      </p>
-                    )}
+                    <div className="block text-xs font-medium text-[var(--text-muted)]">
+                      <span className="block">설문 템플릿 (발송 전 지정)</span>
+                      <SurveySendTemplatePicker
+                        value={resolveSendTemplateId(selected.id)}
+                        options={sendTemplateSummaries}
+                        onChange={(id) => handleSendTemplateChange(selected.id, id)}
+                        disabled={sendTemplateSummaries.length === 0}
+                        menuAlignRef={previewPanelRef}
+                        className="mt-1"
+                      />
+                    </div>
                   </div>
+                  <div className="mb-3">
+                    <button
+                      type="button"
+                      onClick={() => void handleSurveyPreview()}
+                      disabled={!resolveSendTemplateId(selected.id)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--text)] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      설문 미리보기
+                    </button>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">
+                      선택한 템플릿으로 새 탭에서 확인합니다. 미리보기에서는 제출할 수 없습니다.
+                    </p>
+                  </div>
+                  {!displayPhone && (
+                    <p className="mb-3 text-xs text-amber-800">
+                      연락처가 없어 발송할 수 없습니다. 번호를 직접 입력해 주세요.
+                    </p>
+                  )}
                   {isEditing ? (
                     <textarea
                       value={editDraft}

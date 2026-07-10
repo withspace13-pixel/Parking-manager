@@ -6,6 +6,12 @@ import {
   resolveProjectManagerPhone,
   type ManagerContact,
 } from "@/lib/manager-contacts";
+import {
+  applyMessageTemplateTokens,
+  buildMessageTemplateReplacements,
+  deriveMessageTemplateFromReplacements,
+  messageDayLabelFromEvents,
+} from "@/lib/message-template-variables";
 import { formatMonthDaySlash } from "@/lib/schedule-dates";
 
 export type SurveyRecipientSendStatus = "pending" | "sent" | "no_phone";
@@ -39,13 +45,18 @@ export function currentYearMonth(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-/** 담당자 묶기 키 — 번호 우선, 없으면 기관명+이름(동명이인 분리) */
-export function getSurveyRecipientGroupKey(project: Project): string {
-  const phone = managerPhoneText(project.manager_phone);
+/** 담당자 묶기 키 — 화면에 보이는 번호·기관·이름 기준 (행사별 최소 1개 보장) */
+export function getSurveyRecipientGroupKey(
+  project: Project,
+  managerContacts: ManagerContact[] = [],
+  phoneIndex?: Map<string, string>
+): string {
+  const phone = resolveProjectManagerPhone(project, managerContacts, phoneIndex);
   if (phone) return `phone:${phone}`;
   const org = String(project.org_name ?? "").trim();
   const mgr = String(project.manager ?? "").trim();
-  return `orgmgr:${org}::${mgr}`;
+  if (org || mgr) return `orgmgr:${org}::${mgr}`;
+  return `project:${project.id}`;
 }
 
 /** 본행사 start~end 일자만 (사전세팅 무관) */
@@ -84,7 +95,7 @@ export type SurveyMessageBuildParams = {
 
 const DEFAULT_SURVEY_URL = "https://example.com/survey/미리보기";
 
-/** 일괄 적용용 플레이스홀더: {담당자} {월} {행사목록} {마감} {url} (기관명은 기본 문구에 미사용) */
+/** 일괄 적용용 치환 변수 — 감사문자·만족도 조사 공통 */
 export const DEFAULT_SURVEY_MESSAGE_TEMPLATE = `{담당자}님, 안녕하세요. 위드스페이스입니다.^^
 {월} 진행하신 행사에 대한 위드스페이스 만족도 조사입니다.
 
@@ -132,18 +143,24 @@ export function sortSurveyRecipientsByEventDate(recipients: SurveyRecipient[]): 
   return [...recipients].sort(compareSurveyRecipientsByEventDate);
 }
 
+export function surveyMessageTemplateReplacements(
+  params: SurveyMessageBuildParams
+): Record<string, string> {
+  return buildMessageTemplateReplacements({
+    displayOrgName: params.displayOrgName,
+    manager: params.manager,
+    events: params.events,
+    yearMonth: params.yearMonth,
+    dayLabel: messageDayLabelFromEvents(params.events, params.yearMonth),
+    surveyUrl: params.surveyUrl ?? DEFAULT_SURVEY_URL,
+  });
+}
+
 export function renderSurveyMessageTemplate(
   template: string,
   params: SurveyMessageBuildParams
 ): string {
-  const url = params.surveyUrl ?? DEFAULT_SURVEY_URL;
-  return template
-    .replaceAll("{기관명}", params.displayOrgName)
-    .replaceAll("{담당자}", params.manager)
-    .replaceAll("{월}", formatSurveyCampaignMonthLabel(params.yearMonth))
-    .replaceAll("{행사목록}", formatSurveyEventLines(params.events))
-    .replaceAll("{마감}", surveyDeadlineLabel(params.yearMonth))
-    .replaceAll("{url}", url);
+  return applyMessageTemplateTokens(template, surveyMessageTemplateReplacements(params));
 }
 
 /** 편집한 본문에서 담당자별 변수를 플레이스홀더로 바꿔 일괄 템플릿 생성 */
@@ -151,20 +168,10 @@ export function deriveSurveyTemplateFromMessage(
   body: string,
   sample: SurveyMessageBuildParams
 ): string {
-  const url = sample.surveyUrl ?? DEFAULT_SURVEY_URL;
-  let t = body;
-  const pairs: Array<[string, string]> = [
-    [sample.displayOrgName, "{기관명}"],
-    [sample.manager, "{담당자}"],
-    [formatSurveyCampaignMonthLabel(sample.yearMonth), "{월}"],
-    [formatSurveyEventLines(sample.events), "{행사목록}"],
-    [surveyDeadlineLabel(sample.yearMonth), "{마감}"],
-    [url, "{url}"],
-  ];
-  for (const [from, to] of pairs) {
-    if (from) t = t.split(from).join(to);
-  }
-  return t;
+  return deriveMessageTemplateFromReplacements(
+    body,
+    surveyMessageTemplateReplacements(sample)
+  );
 }
 
 export function buildSatisfactionSurveyMessage(
@@ -206,7 +213,7 @@ export function groupProjectsIntoSurveyRecipients(
       : undefined;
 
   for (const p of filtered) {
-    const id = getSurveyRecipientGroupKey(p);
+    const id = getSurveyRecipientGroupKey(p, managerContacts, phoneIndex);
     const phone = resolveProjectManagerPhone(p, managerContacts, phoneIndex);
     const event: SurveyRecipientEvent = {
       projectId: p.id,

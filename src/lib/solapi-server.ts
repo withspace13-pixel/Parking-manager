@@ -294,12 +294,50 @@ export type SolapiBalanceResult = {
   point: number;
 };
 
+function resolveSolapiCash(res: {
+  balance?: number;
+  balanceOnly?: number;
+  deposit?: number;
+}): number {
+  const balance = Number(res.balance ?? 0);
+  const balanceOnly =
+    res.balanceOnly != null && !Number.isNaN(Number(res.balanceOnly))
+      ? Number(res.balanceOnly)
+      : null;
+  const deposit =
+    res.deposit != null && !Number.isNaN(Number(res.deposit)) ? Number(res.deposit) : 0;
+
+  if (balanceOnly != null && balanceOnly > 0) {
+    return balanceOnly;
+  }
+
+  // balanceOnly가 0인 계정: 콘솔 「잔액」이 deposit(예치금)과 일치하는 경우가 있음
+  if (balanceOnly === 0 && deposit > 0 && deposit >= balance) {
+    return deposit;
+  }
+
+  if (balance > 0) {
+    return balance;
+  }
+
+  if (balanceOnly != null) {
+    return balanceOnly;
+  }
+
+  return balance;
+}
+
 /** 솔라피 충전 잔액·포인트 조회 */
 export async function fetchSolapiBalance(): Promise<SolapiBalanceResult> {
   const messageService = createMessageService();
-  const res = (await messageService.getBalance()) as { balance?: number; point?: number };
+  const res = (await messageService.getBalance()) as {
+    balance?: number;
+    balanceOnly?: number;
+    deposit?: number;
+    point?: number;
+  };
   return {
-    balance: Math.round(Number(res.balance ?? 0)),
+    balance: Math.round(resolveSolapiCash(res)),
     point: Math.round(Number(res.point ?? 0)),
   };
 }

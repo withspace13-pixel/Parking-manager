@@ -19,6 +19,7 @@ import {
   Pencil,
   MessageCircle,
   ClipboardList,
+  BarChart3,
 } from "lucide-react";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
@@ -40,6 +41,7 @@ import { compareMainEventListByRoom } from "@/lib/main-event-room-sort";
 import { navigateToNewProject } from "@/lib/navigate";
 import { isArchivedProjectExpiredForPurge } from "@/lib/archive-retention";
 import { ParkingSection } from "@/components/ParkingSection";
+import { SurveyResultsPanel } from "@/components/survey/SurveyResultsPanel";
 import { SatisfactionSurveyPanel } from "@/components/SatisfactionSurveyPanel";
 import { ThankYouSmsPanel } from "@/components/ThankYouSmsPanel";
 import { MhpStoreCreditBadge } from "@/components/MhpStoreCreditBadge";
@@ -89,7 +91,7 @@ function koreanDateTitle(d: string) {
 
 type ProjectWithRoom = Project & { roomName: string };
 
-type DashboardTab = "active" | "archive" | "thank_you" | "survey";
+type DashboardTab = "active" | "archive" | "thank_you" | "survey" | "survey_results";
 
 export default function HomePage() {
   const router = useRouter();
@@ -602,6 +604,18 @@ export default function HomePage() {
                 <ClipboardList className="h-3.5 w-3.5" />
                 만족도 조사
               </button>
+              <button
+                type="button"
+                onClick={() => setDashboardTab("survey_results")}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 font-medium ${
+                  dashboardTab === "survey_results"
+                    ? "bg-white text-[var(--text)] shadow-sm"
+                    : "text-[var(--text-muted)] hover:text-[var(--text)]"
+                }`}
+              >
+                <BarChart3 className="h-3.5 w-3.5" />
+                만족도조사 결과
+              </button>
             </div>
           </div>
           <button
@@ -615,6 +629,8 @@ export default function HomePage() {
         </div>
 
         {dashboardTab === "survey" && <SatisfactionSurveyPanel projects={allProjects} />}
+
+        {dashboardTab === "survey_results" && <SurveyResultsPanel projects={allProjects} />}
 
         {dashboardTab === "thank_you" && <ThankYouSmsPanel projects={allProjects} />}
 

@@ -2,6 +2,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DEFAULT_SURVEY_MESSAGE_TEMPLATE } from "@/lib/survey-messaging";
 import { DEFAULT_THANK_YOU_MESSAGE_TEMPLATE } from "@/lib/thank-you-messaging";
+import { MESSAGE_TEMPLATE_PLACEHOLDER_TOKENS } from "@/lib/message-template-variables";
 
 export type MessageTemplateCampaign = "survey" | "thank_you";
 
@@ -19,8 +20,8 @@ export const BUILTIN_MESSAGE_TEMPLATE_NAME: Record<MessageTemplateCampaign, stri
 };
 
 export const MESSAGE_TEMPLATE_PLACEHOLDER_HINT: Record<MessageTemplateCampaign, string> = {
-  survey: "{담당자} {기관명} {월} {행사목록} {마감} {url}",
-  thank_you: "{담당자} {기관명} {일자} {행사목록}",
+  survey: MESSAGE_TEMPLATE_PLACEHOLDER_TOKENS,
+  thank_you: MESSAGE_TEMPLATE_PLACEHOLDER_TOKENS,
 };
 
 export const SEED_TEMPLATE_BODY: Record<MessageTemplateCampaign, string> = {

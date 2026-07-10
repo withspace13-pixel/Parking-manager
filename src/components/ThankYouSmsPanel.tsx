@@ -398,6 +398,8 @@ export function ThankYouSmsPanel({ projects }: Props) {
     previewBody,
   ]);
 
+  const trackedTemplateBody = getTemplateBodyForSave();
+
   const handleApplySavedTemplate = async (body: string) => {
     try {
       const data = await applyBulkMessageOverride(supabase, "thank_you", targetDate, body);
@@ -843,6 +845,7 @@ export function ThankYouSmsPanel({ projects }: Props) {
                   <MessageTemplateControls
                     campaign="thank_you"
                     getTemplateBody={getTemplateBodyForSave}
+                    trackedTemplateBody={trackedTemplateBody}
                     onApplyTemplate={handleApplySavedTemplate}
                     onFeedback={showFeedback}
                     onTemplatesChanged={refreshBuiltinTemplate}
