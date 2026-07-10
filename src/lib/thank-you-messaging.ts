@@ -12,6 +12,7 @@ import {
   buildMessageTemplateReplacements,
   deriveMessageTemplateFromReplacements,
   formatMessageDayLabel,
+  messageDayLabelFromEvents,
 } from "@/lib/message-template-variables";
 import {
   estimateMessageType,
@@ -71,7 +72,7 @@ export function thankYouMessageTemplateReplacements(
     manager: params.manager,
     events: params.events,
     yearMonth,
-    dayLabel: formatThankYouCampaignDayLabel(params.targetDate),
+    dayLabel: messageDayLabelFromEvents(params.events, yearMonth),
   });
 }
 

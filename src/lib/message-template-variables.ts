@@ -10,7 +10,7 @@ export const MESSAGE_TEMPLATE_VARIABLE_HINTS = [
   { token: "{담당자}", description: "담당자 이름으로 바뀝니다.", example: "김민선" },
   { token: "{기관명}", description: "대표 기관명으로 바뀝니다.", example: "위드스페이스" },
   { token: "{월}", description: "대상 월로 바뀝니다.", example: "7월" },
-  { token: "{일자}", description: "대상 일자로 바뀝니다.", example: "7월 7일" },
+  { token: "{일자}", description: "담당자 행사 일자로 바뀝니다. 단일일은 종료일, 기간 행사는 시작~종료로 표시합니다.", example: "7월 8일 ~ 10일" },
   {
     token: "{행사명}",
     description: "행사명 1개만 나옵니다. 같은 날·같은 달에 여러 행사가 있어도 첫 번째 행사명만 사용합니다.",
@@ -81,13 +81,31 @@ export function formatPrimaryEventName(events: MessageTemplateEvent[]): string {
   return sorted[0]?.eventName ?? "";
 }
 
+/** 행사 1건의 일자 문구 — 단일일은 종료일, 기간 행사는 7월 8일 ~ 10일 형식 */
+export function formatEventDayLabel(
+  event: Pick<MessageTemplateEvent, "startDate" | "endDate">
+): string {
+  const start = String(event.startDate).slice(0, 10);
+  const end = String(event.endDate).slice(0, 10);
+  if (!end) return "";
+  if (!start || start === end) {
+    return formatMessageDayLabel(end);
+  }
+  const [, sm, sd] = start.split("-");
+  const [, em, ed] = end.split("-");
+  if (sm === em) {
+    return `${Number(sm)}월 ${Number(sd)}일 ~ ${Number(ed)}일`;
+  }
+  return `${formatMessageDayLabel(start)} ~ ${formatMessageDayLabel(end)}`;
+}
+
 export function messageDayLabelFromEvents(
   events: MessageTemplateEvent[],
   yearMonth: string
 ): string {
   const sorted = sortEvents(events);
-  if (sorted[0]?.endDate) {
-    return formatMessageDayLabel(sorted[0].endDate);
+  if (sorted[0]) {
+    return formatEventDayLabel(sorted[0]);
   }
   return formatCampaignMonthLabel(yearMonth);
 }
