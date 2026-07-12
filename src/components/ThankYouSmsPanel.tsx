@@ -428,11 +428,6 @@ export function ThankYouSmsPanel({ projects }: Props) {
       );
       return;
     }
-    const msgType = estimateMessageType(preview);
-    const ok = confirm(
-      `${manager} 님(${formatManagerPhoneDisplay(phone)})에게 감사 문자를 발송할까요?\n\n(${msgType} · 솔라피 실발송)`
-    );
-    if (!ok) return;
     setSendingId(recipient.id);
     try {
       const result = await sendMessageViaApi({ to: phone, text: preview });
@@ -464,9 +459,9 @@ export function ThankYouSmsPanel({ projects }: Props) {
         void addRecipientSentId(supabase, "thank_you", targetDate, recipient.id);
       }
 
-      alert(describeSmsSendResult(result));
+      showFeedback(describeSmsSendResult(result));
     } catch (err) {
-      alert(err instanceof Error ? err.message : "문자 발송에 실패했습니다.");
+      showFeedback(err instanceof Error ? err.message : "문자 발송에 실패했습니다.");
     } finally {
       setSendingId(null);
     }

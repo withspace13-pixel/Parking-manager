@@ -185,14 +185,6 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     [sendTemplateOverrides, yearMonth, sendTemplateId]
   );
 
-  const resolveSendTemplateName = useCallback(
-    (recipientId: string) => {
-      const id = resolveSendTemplateId(recipientId);
-      return sendTemplateSummaries.find((t) => t.id === id)?.name ?? "선택된 템플릿";
-    },
-    [resolveSendTemplateId, sendTemplateSummaries]
-  );
-
   const handleSendTemplateChange = (recipientId: string, id: string) => {
     setSendTemplateOverrides((prev) => ({
       ...prev,
@@ -605,12 +597,6 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
       );
       return;
     }
-    const msgType = estimateMessageType(preview);
-    const templateLabel = resolveSendTemplateName(recipient.id);
-    const ok = confirm(
-      `${manager} 님(${formatManagerPhoneDisplay(phone)})에게 만족도 조사 문자를 발송할까요?\n\n설문: ${templateLabel}\n(${msgType} · 솔라피 실발송)`
-    );
-    if (!ok) return;
     setSendingId(recipient.id);
     try {
       const result = await sendMessageViaApi({ to: phone, text: preview });
@@ -642,9 +628,9 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
         void addRecipientSentId(supabase, "survey", yearMonth, recipient.id);
       }
 
-      alert(describeSmsSendResult(result));
+      showFeedback(describeSmsSendResult(result));
     } catch (err) {
-      alert(err instanceof Error ? err.message : "문자 발송에 실패했습니다.");
+      showFeedback(err instanceof Error ? err.message : "문자 발송에 실패했습니다.");
     } finally {
       setSendingId(null);
     }
