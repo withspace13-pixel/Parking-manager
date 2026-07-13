@@ -76,6 +76,7 @@ export type SurveyCampaignSettings = {
   title: string;
   introText: string;
   headerImageUrl: string | null;
+  completionMessage: string;
 };
 
 export type SurveyQuestionTemplateItem = {
@@ -102,3 +103,8 @@ export const DEFAULT_SURVEY_CAMPAIGN_TITLE = "위드스페이스 만족도 조�
 export const DEFAULT_SURVEY_INTRO_TEXT = `안녕하세요, 위드스페이스입니다.
 행사 진행에 대한 만족도 조사를 진행하고 있습니다.
 설문에 참여해 주시면 감사하겠습니다.`;
+
+export const DEFAULT_SURVEY_COMPLETION_MESSAGE = `설문 조사에 참여해 주셔서 감사합니다.
+보내주신 소중한 의견을 바탕으로 앞으로 더 좋은 품질의 서비스를 제공하도록 노력하겠습니다.
+
+위드스페이스에서 다시 뵐 수 있기를 기대하겠습니다.`;

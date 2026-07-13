@@ -7,7 +7,7 @@ import type {
   SurveyQuestionTemplate,
   SurveyQuestionTemplateItem,
 } from "@/lib/survey/types";
-import { DEFAULT_SURVEY_CAMPAIGN_TITLE, DEFAULT_SURVEY_INTRO_TEXT } from "@/lib/survey/types";
+import { DEFAULT_SURVEY_CAMPAIGN_TITLE, DEFAULT_SURVEY_COMPLETION_MESSAGE, DEFAULT_SURVEY_INTRO_TEXT } from "@/lib/survey/types";
 
 const DEV_SURVEY_KEY = "parking-manager-survey-dev";
 
@@ -183,6 +183,7 @@ export const devSurveyStore = {
         title: DEFAULT_SURVEY_CAMPAIGN_TITLE,
         introText: DEFAULT_SURVEY_INTRO_TEXT,
         headerImageUrl: null,
+        completionMessage: DEFAULT_SURVEY_COMPLETION_MESSAGE,
       }
     );
   },

@@ -4,6 +4,7 @@
 import { useState } from "react";
 import type { Project } from "@/lib/supabase";
 import { currentYearMonth } from "@/lib/survey-messaging";
+import { SurveyCompletionScreenSettings } from "@/components/survey/SurveyCompletionScreenSettings";
 import { SurveyQuestionsManager } from "@/components/survey/SurveyQuestionsManager";
 import { SurveyResponsesManager } from "@/components/survey/SurveyResponsesManager";
 import { SurveySummaryView } from "@/components/survey/SurveySummaryView";
@@ -12,10 +13,11 @@ type Props = {
   projects: Project[];
 };
 
-type SubView = "questions" | "responses" | "summary";
+type SubView = "questions" | "completion" | "responses" | "summary";
 
 const TABS: Array<{ id: SubView; label: string }> = [
   { id: "questions", label: "질문 관리" },
+  { id: "completion", label: "설문 결과 화면" },
   { id: "responses", label: "응답 관리" },
   { id: "summary", label: "요약" },
 ];
@@ -58,6 +60,7 @@ export function SurveyResultsPanel({ projects }: Props) {
       </div>
 
       {subView === "questions" && <SurveyQuestionsManager campaignKey={yearMonth} />}
+      {subView === "completion" && <SurveyCompletionScreenSettings campaignKey={yearMonth} />}
       {subView === "responses" && (
         <SurveyResponsesManager campaignKey={yearMonth} projects={projects} />
       )}

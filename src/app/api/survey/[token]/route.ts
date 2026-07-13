@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getInviteDisplayForm, getInvitePreviewForm } from "@/lib/survey/survey-form-snapshot";
+import { fetchSurveyCampaignSettings } from "@/lib/survey/survey-campaign-settings";
 import { fetchSurveyInviteByToken } from "@/lib/survey/survey-invites";
 import { submitSurveyAnswers } from "@/lib/survey/survey-responses";
 import type { SurveyAnswerInput } from "@/lib/survey/types";
@@ -37,6 +38,9 @@ export async function GET(
           title: settings.title,
           introText: settings.introText,
           headerImageUrl: settings.headerImageUrl,
+          completionMessage: (
+            await fetchSurveyCampaignSettings(supabase, invite.campaignKey, { includeHeader: false })
+          ).completionMessage,
         },
         questions: questions.map((q) => ({
           id: q.id,
@@ -55,10 +59,14 @@ export async function GET(
   }
 
   const { settings, questions } = await getInviteDisplayForm(supabase, invite);
+  const campaignSettings = await fetchSurveyCampaignSettings(supabase, invite.campaignKey, {
+    includeHeader: false,
+  });
   const settingsPayload = {
     title: settings.title,
     introText: settings.introText,
     headerImageUrl: settings.headerImageUrl,
+    completionMessage: campaignSettings.completionMessage,
   };
 
   if (invite.submittedAt) {

@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { isDevMode } from "@/lib/dev-mode";
 import { devSurveyStore } from "@/lib/survey/dev-survey-store";
 import {
+  fetchSurveyCampaignSettings,
   seedSurveyCampaignSettingsCache,
   upsertSurveyCampaignSettings,
 } from "@/lib/survey/survey-campaign-settings";
@@ -309,11 +310,15 @@ export async function applySurveyQuestionTemplate(
   campaignKey: string,
   template: SurveyQuestionTemplate
 ): Promise<SurveyTemplateApplyResult> {
+  const existing = await fetchSurveyCampaignSettings(supabase, campaignKey, {
+    includeHeader: false,
+  });
   const settings: SurveyCampaignSettings = {
     campaignKey,
     title: template.title,
     introText: template.introText,
     headerImageUrl: template.headerImageUrl,
+    completionMessage: existing.completionMessage,
   };
 
   await upsertSurveyCampaignSettings(supabase, settings);

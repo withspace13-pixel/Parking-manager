@@ -4,6 +4,7 @@ import { isDevMode } from "@/lib/dev-mode";
 import { devSurveyStore } from "@/lib/survey/dev-survey-store";
 import {
   DEFAULT_SURVEY_CAMPAIGN_TITLE,
+  DEFAULT_SURVEY_COMPLETION_MESSAGE,
   DEFAULT_SURVEY_INTRO_TEXT,
   type SurveyCampaignSettings,
 } from "@/lib/survey/types";
@@ -33,7 +34,13 @@ function defaults(campaignKey: string): SurveyCampaignSettings {
     title: DEFAULT_SURVEY_CAMPAIGN_TITLE,
     introText: DEFAULT_SURVEY_INTRO_TEXT,
     headerImageUrl: null,
+    completionMessage: DEFAULT_SURVEY_COMPLETION_MESSAGE,
   };
+}
+
+function completionMessageFromDb(value: string | null | undefined): string {
+  const trimmed = String(value ?? "").trim();
+  return trimmed || DEFAULT_SURVEY_COMPLETION_MESSAGE;
 }
 
 export async function fetchSurveyCampaignSettings(
@@ -61,7 +68,7 @@ export async function fetchSurveyCampaignSettings(
   if (includeHeader) {
     const { data, error } = await supabase
       .from("survey_campaign_settings")
-      .select("campaign_key, title, intro_text, header_image_url")
+      .select("campaign_key, title, intro_text, header_image_url, completion_message")
       .eq("campaign_key", campaignKey)
       .maybeSingle();
 
@@ -76,6 +83,7 @@ export async function fetchSurveyCampaignSettings(
       title: data.title || DEFAULT_SURVEY_CAMPAIGN_TITLE,
       introText: data.intro_text || DEFAULT_SURVEY_INTRO_TEXT,
       headerImageUrl: data.header_image_url,
+      completionMessage: completionMessageFromDb(data.completion_message),
     };
     cache.set(campaignKey, settings);
     if (data.header_image_url) headerCache.set(campaignKey, data.header_image_url);
@@ -84,7 +92,7 @@ export async function fetchSurveyCampaignSettings(
 
   const { data, error } = await supabase
     .from("survey_campaign_settings")
-    .select("campaign_key, title, intro_text")
+    .select("campaign_key, title, intro_text, completion_message")
     .eq("campaign_key", campaignKey)
     .maybeSingle();
 
@@ -99,6 +107,7 @@ export async function fetchSurveyCampaignSettings(
     title: data.title || DEFAULT_SURVEY_CAMPAIGN_TITLE,
     introText: data.intro_text || DEFAULT_SURVEY_INTRO_TEXT,
     headerImageUrl: null,
+    completionMessage: completionMessageFromDb(data.completion_message),
   };
   cache.set(campaignKey, settings);
   return settings;
@@ -163,6 +172,7 @@ export async function upsertSurveyCampaignSettings(
       title: settings.title.trim(),
       intro_text: settings.introText.trim(),
       header_image_url: settings.headerImageUrl?.trim() || null,
+      completion_message: settings.completionMessage.trim() || DEFAULT_SURVEY_COMPLETION_MESSAGE,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "campaign_key" }

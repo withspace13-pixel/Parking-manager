@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { isDevMode } from "@/lib/dev-mode";
 import { devSurveyStore } from "@/lib/survey/dev-survey-store";
+import { SurveyCompletionMessageView } from "@/components/survey/SurveyCompletionMessageView";
 import { SurveyHeaderMedia } from "@/components/survey/SurveyHeaderMedia";
 import {
   buildSurveyFormSnapshotFromTemplate,
@@ -15,7 +16,13 @@ import { fetchSurveyQuestionTemplateById } from "@/lib/survey/survey-question-te
 import { submitSurveyAnswers } from "@/lib/survey/survey-responses";
 import { supabase } from "@/lib/supabase";
 import type { SurveyAnswerInput, SurveyQuestion } from "@/lib/survey/types";
-import { DEFAULT_SURVEY_CAMPAIGN_TITLE, DEFAULT_SURVEY_INTRO_TEXT, SURVEY_LONG_MAX, SURVEY_SHORT_MAX } from "@/lib/survey/types";
+import {
+  DEFAULT_SURVEY_CAMPAIGN_TITLE,
+  DEFAULT_SURVEY_COMPLETION_MESSAGE,
+  DEFAULT_SURVEY_INTRO_TEXT,
+  SURVEY_LONG_MAX,
+  SURVEY_SHORT_MAX,
+} from "@/lib/survey/types";
 import { resolveSurveyPageTitle } from "@/lib/survey/survey-page-title";
 
 type CampaignHeader = {
@@ -100,6 +107,7 @@ export function SurveyFormClient({ token }: Props) {
     introText: DEFAULT_SURVEY_INTRO_TEXT,
     headerImageUrl: null,
   });
+  const [completionMessage, setCompletionMessage] = useState(DEFAULT_SURVEY_COMPLETION_MESSAGE);
   const [answers, setAnswers] = useState<Record<string, Record<string, string>>>({});
   const [submitting, setSubmitting] = useState(false);
   const [useDevPath, setUseDevPath] = useState(false);
@@ -112,6 +120,7 @@ export function SurveyFormClient({ token }: Props) {
     setPreviewMode(false);
     setQuestions([]);
     setAnswers({});
+    setCompletionMessage(DEFAULT_SURVEY_COMPLETION_MESSAGE);
     try {
       const devInvite = isDevMode() ? devSurveyStore.getInviteByToken(token) : null;
       if (devInvite && isPreviewRequest) {
@@ -144,6 +153,7 @@ export function SurveyFormClient({ token }: Props) {
       if (devInvite) {
         setUseDevPath(true);
         const settings = devSurveyStore.getCampaignSettings(devInvite.campaignKey);
+        setCompletionMessage(settings.completionMessage);
         setHeader({
           title: settings.title,
           introText: settings.introText,
@@ -176,6 +186,9 @@ export function SurveyFormClient({ token }: Props) {
             introText: data.settings.introText || DEFAULT_SURVEY_INTRO_TEXT,
             headerImageUrl: data.settings.headerImageUrl ?? null,
           });
+          if (data.settings.completionMessage) {
+            setCompletionMessage(data.settings.completionMessage);
+          }
         }
         return;
       }
@@ -185,6 +198,9 @@ export function SurveyFormClient({ token }: Props) {
           introText: data.settings.introText || DEFAULT_SURVEY_INTRO_TEXT,
           headerImageUrl: data.settings.headerImageUrl ?? null,
         });
+        if (data.settings.completionMessage) {
+          setCompletionMessage(data.settings.completionMessage);
+        }
       }
       setQuestions(data.questions ?? []);
     } catch {
@@ -296,11 +312,8 @@ export function SurveyFormClient({ token }: Props) {
   if (submitted) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#f0ebe3] p-6">
-        <div className="card max-w-lg p-10 text-center">
-          <h1 className="text-xl font-bold text-[var(--text)]">응답이 기록되었습니다</h1>
-          <p className="mt-3 text-sm text-[var(--text-muted)]">
-            소중한 의견 감사합니다. 이미 제출된 설문은 수정할 수 없습니다.
-          </p>
+        <div className="card max-w-lg p-10">
+          <SurveyCompletionMessageView message={completionMessage} />
         </div>
       </div>
     );
