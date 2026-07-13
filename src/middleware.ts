@@ -2,22 +2,36 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-function surveyPublicHosts(): Set<string> {
-  const raw = process.env.NEXT_PUBLIC_SURVEY_PUBLIC_URL || "";
-  if (!raw) return new Set();
+function parseSurveyHost(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
   try {
-    return new Set([new URL(raw).host.toLowerCase()]);
+    return trimmed.includes("://")
+      ? new URL(trimmed).host.split(":")[0].toLowerCase()
+      : trimmed.split(":")[0].toLowerCase();
   } catch {
-    return new Set();
+    return null;
   }
 }
 
-const SURVEY_HOSTS = surveyPublicHosts();
+/** 요청마다 읽어야 Vercel env 변경·런타임 변수가 반영됩니다 */
+function surveyPublicHosts(): Set<string> {
+  const hosts = new Set<string>();
+  for (const raw of [
+    process.env.SURVEY_ONLY_HOST,
+    process.env.NEXT_PUBLIC_SURVEY_PUBLIC_URL,
+  ]) {
+    const host = raw ? parseSurveyHost(raw) : null;
+    if (host) hosts.add(host);
+  }
+  return hosts;
+}
 
 function isSurveyOnlyHost(hostHeader: string | null): boolean {
-  if (SURVEY_HOSTS.size === 0 || !hostHeader) return false;
+  const hosts = surveyPublicHosts();
+  if (hosts.size === 0 || !hostHeader) return false;
   const host = hostHeader.split(":")[0]?.toLowerCase() ?? "";
-  return SURVEY_HOSTS.has(host);
+  return hosts.has(host);
 }
 
 function isAllowedOnSurveyHost(pathname: string): boolean {

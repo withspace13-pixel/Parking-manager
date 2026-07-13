@@ -27,20 +27,48 @@ export function parseSurveyFormSnapshot(raw: unknown): SurveyFormSnapshot | null
   return o;
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isValidUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
 /** 초대 토큰·순서 기준 고정 ID — 재동결·페이지 유지 시 응답 ID 불일치 방지 */
 export function stableSnapshotQuestionId(inviteToken: string, sortOrder: number): string {
   let h1 = 0x811c9dc5;
   let h2 = 0x811c9dc5;
+  let h3 = 0x811c9dc5;
   const seed = `${inviteToken}\0${sortOrder}`;
   for (let i = 0; i < seed.length; i++) {
     const c = seed.charCodeAt(i);
     h1 = Math.imul(h1 ^ c, 0x01000193);
     h2 = Math.imul(h2 ^ (c + sortOrder + 1), 0x01000193);
+    h3 = Math.imul(h3 ^ (c * 31 + i), 0x01000193);
   }
-  const p = (n: number) => (n >>> 0).toString(16).padStart(8, "0");
-  const a = p(h1);
-  const b = p(h2);
-  return `${a.slice(0, 8)}-${a.slice(0, 4)}-4${b.slice(1, 4)}-8${b.slice(4, 8)}-${b.slice(0, 4)}${a.slice(4, 8)}`;
+  const hex = (n: number) => (n >>> 0).toString(16).padStart(8, "0");
+  const a = hex(h1);
+  const b = hex(h2);
+  const c = hex(h3);
+  const variant = `${((parseInt(b.slice(0, 2), 16) & 0x3f) | 0x80).toString(16).padStart(2, "0")}${b.slice(2, 4)}`;
+  return `${a.slice(0, 8)}-${a.slice(0, 4)}-4${b.slice(0, 3)}-${variant}-${c.slice(0, 8)}${b.slice(4, 8)}${a.slice(4, 8)}`;
+}
+
+/** DB에 저장된 잘못된 UUID 스냅샷 ID를 토큰·순서 기준 ID로 교정 */
+export function repairSnapshotQuestionIds(
+  snapshot: SurveyFormSnapshot,
+  inviteToken: string
+): SurveyFormSnapshot {
+  let changed = false;
+  const questions = snapshot.questions.map((q, i) => {
+    const order = q.sortOrder ?? i;
+    const fixedId = stableSnapshotQuestionId(inviteToken, order);
+    if (q.id === fixedId) return q;
+    if (isValidUuid(q.id)) return q;
+    changed = true;
+    return { ...q, id: fixedId };
+  });
+  return changed ? { ...snapshot, questions } : snapshot;
 }
 
 function preserveSnapshotQuestionIds(
@@ -50,10 +78,13 @@ function preserveSnapshotQuestionIds(
   if (!existing?.questions?.length) return next;
   return {
     ...next,
-    questions: next.questions.map((q, i) => ({
-      ...q,
-      id: existing.questions[i]?.id ?? q.id,
-    })),
+    questions: next.questions.map((q, i) => {
+      const existingId = existing.questions[i]?.id;
+      return {
+        ...q,
+        id: existingId && isValidUuid(existingId) ? existingId : q.id,
+      };
+    }),
   };
 }
 
@@ -256,13 +287,14 @@ export async function getInviteDisplayForm(
   questions: SurveyQuestion[];
 }> {
   if (invite.formSnapshot) {
+    const snapshot = repairSnapshotQuestionIds(invite.formSnapshot, invite.token);
     return {
       settings: await resolveSnapshotCampaignSettings(
         supabase,
         invite.campaignKey,
-        invite.formSnapshot
+        snapshot
       ),
-      questions: snapshotQuestionsToSurveyQuestions(invite.formSnapshot, invite.campaignKey),
+      questions: snapshotQuestionsToSurveyQuestions(snapshot, invite.campaignKey),
     };
   }
 
