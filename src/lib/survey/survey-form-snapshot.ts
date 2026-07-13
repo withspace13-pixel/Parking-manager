@@ -39,19 +39,27 @@ export function stableSnapshotQuestionId(inviteToken: string, sortOrder: number)
   let h1 = 0x811c9dc5;
   let h2 = 0x811c9dc5;
   let h3 = 0x811c9dc5;
+  let h4 = 0x811c9dc5;
   const seed = `${inviteToken}\0${sortOrder}`;
   for (let i = 0; i < seed.length; i++) {
     const c = seed.charCodeAt(i);
     h1 = Math.imul(h1 ^ c, 0x01000193);
     h2 = Math.imul(h2 ^ (c + sortOrder + 1), 0x01000193);
     h3 = Math.imul(h3 ^ (c * 31 + i), 0x01000193);
+    h4 = Math.imul(h4 ^ (c * 17 + sortOrder), 0x01000193);
   }
   const hex = (n: number) => (n >>> 0).toString(16).padStart(8, "0");
-  const a = hex(h1);
-  const b = hex(h2);
-  const c = hex(h3);
-  const variant = `${((parseInt(b.slice(0, 2), 16) & 0x3f) | 0x80).toString(16).padStart(2, "0")}${b.slice(2, 4)}`;
-  return `${a.slice(0, 8)}-${a.slice(0, 4)}-4${b.slice(0, 3)}-${variant}-${c.slice(0, 8)}${b.slice(4, 8)}${a.slice(4, 8)}`;
+  const raw = `${hex(h1)}${hex(h2)}${hex(h3)}${hex(h4)}`;
+  const timeLow = raw.slice(0, 8);
+  const timeMid = raw.slice(8, 12);
+  const timeHi = `4${raw.slice(13, 16)}`;
+  const clockSeq = `${((parseInt(raw[16]!, 16) & 0x3) | 0x8).toString(16)}${raw.slice(17, 20)}`;
+  const node = raw.slice(20, 32);
+  const id = `${timeLow}-${timeMid}-${timeHi}-${clockSeq}-${node}`;
+  if (!isValidUuid(id)) {
+    throw new Error("stableSnapshotQuestionId: invalid UUID generated");
+  }
+  return id;
 }
 
 /** DB에 저장된 잘못된 UUID 스냅샷 ID를 토큰·순서 기준 ID로 교정 */
@@ -59,12 +67,15 @@ export function repairSnapshotQuestionIds(
   snapshot: SurveyFormSnapshot,
   inviteToken: string
 ): SurveyFormSnapshot {
+  const needsStableIds =
+    Boolean(snapshot.templateId) || snapshot.questions.some((q) => !isValidUuid(q.id));
+  if (!needsStableIds) return snapshot;
+
   let changed = false;
   const questions = snapshot.questions.map((q, i) => {
     const order = q.sortOrder ?? i;
     const fixedId = stableSnapshotQuestionId(inviteToken, order);
     if (q.id === fixedId) return q;
-    if (isValidUuid(q.id)) return q;
     changed = true;
     return { ...q, id: fixedId };
   });
@@ -288,6 +299,17 @@ export async function getInviteDisplayForm(
 }> {
   if (invite.formSnapshot) {
     const snapshot = repairSnapshotQuestionIds(invite.formSnapshot, invite.token);
+    const idsChanged = snapshot.questions.some(
+      (q, i) => q.id !== invite.formSnapshot!.questions[i]?.id
+    );
+    if (!invite.submittedAt && idsChanged) {
+      const { error } = await supabase
+        .from("survey_invites")
+        .update({ form_snapshot: snapshot })
+        .eq("token", invite.token)
+        .is("submitted_at", null);
+      if (!error) invalidateSurveyInvitesCache(invite.campaignKey);
+    }
     return {
       settings: await resolveSnapshotCampaignSettings(
         supabase,
