@@ -17,14 +17,15 @@ export function SurveyCompletionMessageView({
   const titleClass =
     variant === "mobile" ? "text-lg font-bold text-[var(--text)]" : "text-xl font-bold text-[var(--text)]";
 
+  const bodyClass =
+    variant === "mobile"
+      ? "mt-3 whitespace-pre-wrap text-[13px] leading-relaxed text-[var(--text-muted)]"
+      : "mt-3 whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-muted)]";
+
   return (
     <div className={`text-center ${className}`.trim()}>
       {title ? <h1 className={titleClass}>{title}</h1> : null}
-      {body ? (
-        <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-muted)]">
-          {body}
-        </p>
-      ) : null}
+      {body ? <p className={bodyClass}>{body}</p> : null}
     </div>
   );
 }
