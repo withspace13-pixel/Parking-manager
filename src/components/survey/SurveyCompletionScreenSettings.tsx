@@ -92,10 +92,17 @@ export function SurveyCompletionScreenSettings({ campaignKey }: Props) {
         </div>
 
         <div className="space-y-2">
-          <p className="text-sm font-semibold text-[var(--text)]">미리보기</p>
-          <div className="rounded-lg border border-[var(--border)] bg-[#f0ebe3] p-6">
-            <div className="card mx-auto max-w-lg p-10">
-              <SurveyCompletionMessageView message={previewMessage} />
+          <p className="text-sm font-semibold text-[var(--text)]">모바일 미리보기</p>
+          <div className="flex justify-center rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 sm:p-6">
+            <div className="w-full max-w-[390px]">
+              <div className="rounded-[1.75rem] border-[3px] border-slate-300 bg-[#f0ebe3] px-3 py-8 shadow-sm">
+                <div className="card p-6">
+                  <SurveyCompletionMessageView message={previewMessage} variant="mobile" />
+                </div>
+              </div>
+              <p className="mt-2 text-center text-[10px] text-[var(--text-muted)]">
+                담당자 휴대폰 화면 기준 (390px)
+              </p>
             </div>
           </div>
         </div>

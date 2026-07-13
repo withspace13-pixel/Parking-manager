@@ -43,6 +43,25 @@ function completionMessageFromDb(value: string | null | undefined): string {
   return trimmed || DEFAULT_SURVEY_COMPLETION_MESSAGE;
 }
 
+/** 설문 공개 API용 — 캐시 없이 DB에서 완료 문구만 조회 */
+export async function fetchSurveyCampaignCompletionMessage(
+  supabase: SupabaseClient,
+  campaignKey: string
+): Promise<string> {
+  if (isDevMode()) {
+    return devSurveyStore.getCampaignSettings(campaignKey).completionMessage;
+  }
+
+  const { data, error } = await supabase
+    .from("survey_campaign_settings")
+    .select("completion_message")
+    .eq("campaign_key", campaignKey)
+    .maybeSingle();
+
+  if (error || !data) return DEFAULT_SURVEY_COMPLETION_MESSAGE;
+  return completionMessageFromDb(data.completion_message);
+}
+
 export async function fetchSurveyCampaignSettings(
   supabase: SupabaseClient,
   campaignKey: string,

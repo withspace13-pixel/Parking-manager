@@ -112,6 +112,12 @@ export function SurveyFormClient({ token }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [useDevPath, setUseDevPath] = useState(false);
 
+  const applyCompletionMessage = (raw: unknown) => {
+    setCompletionMessage(
+      typeof raw === "string" && raw.trim() ? raw.trim() : DEFAULT_SURVEY_COMPLETION_MESSAGE
+    );
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -186,9 +192,7 @@ export function SurveyFormClient({ token }: Props) {
             introText: data.settings.introText || DEFAULT_SURVEY_INTRO_TEXT,
             headerImageUrl: data.settings.headerImageUrl ?? null,
           });
-          if (data.settings.completionMessage) {
-            setCompletionMessage(data.settings.completionMessage);
-          }
+          applyCompletionMessage(data.settings?.completionMessage);
         }
         return;
       }
@@ -198,9 +202,7 @@ export function SurveyFormClient({ token }: Props) {
           introText: data.settings.introText || DEFAULT_SURVEY_INTRO_TEXT,
           headerImageUrl: data.settings.headerImageUrl ?? null,
         });
-        if (data.settings.completionMessage) {
-          setCompletionMessage(data.settings.completionMessage);
-        }
+        applyCompletionMessage(data.settings.completionMessage);
       }
       setQuestions(data.questions ?? []);
     } catch {
@@ -312,8 +314,8 @@ export function SurveyFormClient({ token }: Props) {
   if (submitted) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#f0ebe3] p-6">
-        <div className="card max-w-lg p-10">
-          <SurveyCompletionMessageView message={completionMessage} />
+        <div className="card max-w-lg p-6 sm:p-10">
+          <SurveyCompletionMessageView message={completionMessage} variant="mobile" />
         </div>
       </div>
     );
