@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { fetchRecipientSentIds } from "@/lib/recipient-sent-storage";
-import { fetchSurveyInvitesWithAnswers } from "@/lib/survey/survey-invites";
+import { fetchSurveyInvitesWithAnswersForAdmin } from "@/lib/survey/survey-invites";
 import { buildSurveySummary } from "@/lib/survey/survey-responses";
 import { downloadSurveySummaryPdf } from "@/lib/survey/survey-summary-pdf";
 import { formatSurveyCampaignMonthLabel } from "@/lib/survey-messaging";
@@ -19,7 +19,9 @@ export function SurveySummaryView({ campaignKey }: Props) {
   const exportRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
-  const [invites, setInvites] = useState<Awaited<ReturnType<typeof fetchSurveyInvitesWithAnswers>>>([]);
+  const [invites, setInvites] = useState<
+    Awaited<ReturnType<typeof fetchSurveyInvitesWithAnswersForAdmin>>
+  >([]);
   const [sentCount, setSentCount] = useState(0);
   const [summary, setSummary] = useState<ReturnType<typeof buildSurveySummary> | null>(null);
 
@@ -27,7 +29,7 @@ export function SurveySummaryView({ campaignKey }: Props) {
     setLoading(true);
     try {
       const [inv, sentIds] = await Promise.all([
-        fetchSurveyInvitesWithAnswers(supabase, campaignKey),
+        fetchSurveyInvitesWithAnswersForAdmin(campaignKey),
         fetchRecipientSentIds(supabase, "survey", campaignKey),
       ]);
       setInvites(inv);

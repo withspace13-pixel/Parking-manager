@@ -10,7 +10,7 @@ import { fetchRecipientSentIds } from "@/lib/recipient-sent-storage";
 import { fetchSurveyQuestions } from "@/lib/survey/survey-questions";
 import {
   ensureSurveyInvitesForRecipients,
-  fetchSurveyInvitesWithAnswers,
+  fetchSurveyInvitesWithAnswersForAdmin,
   type SurveyInviteWithAnswers,
 } from "@/lib/survey/survey-invites";
 import {
@@ -94,10 +94,10 @@ export function SurveyResponsesManager({ campaignKey, projects }: Props) {
           orgName: r.displayOrgName,
         }))
       );
-      const inv = await fetchSurveyInvitesWithAnswers(supabase, campaignKey);
+      const inv = await fetchSurveyInvitesWithAnswersForAdmin(campaignKey);
       const fixed = await reconcileStaleSurveySubmissions(supabase, campaignKey);
       const invFresh =
-        fixed > 0 ? await fetchSurveyInvitesWithAnswers(supabase, campaignKey) : inv;
+        fixed > 0 ? await fetchSurveyInvitesWithAnswersForAdmin(campaignKey) : inv;
       setQuestions(qs);
       setInvites(invFresh);
       setSentIds(sent);

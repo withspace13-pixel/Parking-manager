@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { isDevMode } from "@/lib/dev-mode";
 import { devSurveyStore } from "@/lib/survey/dev-survey-store";
 import type { SurveyInvite, SurveyFormSnapshot } from "@/lib/survey/types";
-import { parseSurveyFormSnapshot } from "@/lib/survey/survey-form-snapshot";
+import { parseSurveyFormSnapshot, stripFormSnapshotImages } from "@/lib/survey/survey-form-snapshot";
 
 type InviteRow = {
   token: string;
@@ -26,7 +26,16 @@ const campaignCache = new Map<string, Map<string, SurveyInvite>>();
 const campaignFetchPromises = new Map<string, Promise<Map<string, SurveyInvite>>>();
 const ensureAllChains = new Map<string, Promise<Map<string, SurveyInvite>>>();
 
-function rowToInvite(row: InviteRow): SurveyInvite {
+export type FetchSurveyInvitesOptions = {
+  /** 관리 화면용 — templateHeaderImageUrl(base64) 제거 */
+  omitSnapshotImages?: boolean;
+};
+
+function rowToInvite(row: InviteRow, options?: FetchSurveyInvitesOptions): SurveyInvite {
+  let formSnapshot = parseSurveyFormSnapshot(row.form_snapshot);
+  if (options?.omitSnapshotImages) {
+    formSnapshot = stripFormSnapshotImages(formSnapshot) ?? null;
+  }
   return {
     token: row.token,
     campaignKey: row.campaign_key,
@@ -35,7 +44,7 @@ function rowToInvite(row: InviteRow): SurveyInvite {
     orgName: row.org_name,
     submittedAt: row.submitted_at,
     createdAt: row.created_at,
-    formSnapshot: parseSurveyFormSnapshot(row.form_snapshot),
+    formSnapshot,
   };
 }
 
@@ -113,7 +122,8 @@ async function loadCampaignInvitesLight(
 
 async function loadCampaignInvitesWithSnapshots(
   supabase: SupabaseClient,
-  campaignKey: string
+  campaignKey: string,
+  options?: FetchSurveyInvitesOptions
 ): Promise<Map<string, SurveyInvite>> {
   const { data, error } = await supabase
     .from("survey_invites")
@@ -127,10 +137,44 @@ async function loadCampaignInvitesWithSnapshots(
 
   const map = new Map<string, SurveyInvite>();
   for (const row of data ?? []) {
-    const invite = rowToInvite(row as InviteRow);
+    const invite = rowToInvite(row as InviteRow, options);
     map.set(invite.recipientId, invite);
   }
   return map;
+}
+
+export type SurveyInviteWithAnswers = SurveyInvite & {
+  answers: Array<{ questionId: string; rowKey: string | null; value: string }>;
+  formSnapshot?: SurveyFormSnapshot | null;
+};
+
+async function fetchSurveyAnswersByTokens(
+  supabase: SupabaseClient,
+  tokens: string[]
+): Promise<Map<string, SurveyInviteWithAnswers["answers"]>> {
+  if (tokens.length === 0) return new Map();
+
+  const { data: answerRows, error } = await supabase
+    .from("survey_answers")
+    .select("invite_token, question_id, row_key, answer_value")
+    .in("invite_token", tokens);
+
+  if (error) {
+    console.warn("[survey_answers fetch]", error.message);
+    return new Map();
+  }
+
+  const byToken = new Map<string, SurveyInviteWithAnswers["answers"]>();
+  for (const row of answerRows ?? []) {
+    const list = byToken.get(row.invite_token as string) ?? [];
+    list.push({
+      questionId: row.question_id as string,
+      rowKey: (row.row_key as string | null) ?? null,
+      value: row.answer_value as string,
+    });
+    byToken.set(row.invite_token as string, list);
+  }
+  return byToken;
 }
 
 export async function fetchSurveyInvitesByCampaign(
@@ -273,18 +317,15 @@ export async function fetchSurveyInviteByToken(
   return rowToInvite(data as InviteRow);
 }
 
-export type SurveyInviteWithAnswers = SurveyInvite & {
-  answers: Array<{ questionId: string; rowKey: string | null; value: string }>;
-  formSnapshot?: SurveyFormSnapshot | null;
-};
-
 export async function fetchSurveyInvitesWithAnswers(
   supabase: SupabaseClient,
-  campaignKey: string
+  campaignKey: string,
+  options?: FetchSurveyInvitesOptions
 ): Promise<SurveyInviteWithAnswers[]> {
   if (isDevMode()) {
     return devSurveyStore.getInvitesByCampaign(campaignKey).map((invite) => ({
       ...invite,
+      formSnapshot: stripFormSnapshotImages(invite.formSnapshot) ?? invite.formSnapshot,
       answers: devSurveyStore.getAnswersByInvite(invite.token).map((a) => ({
         questionId: a.questionId,
         rowKey: a.rowKey ?? null,
@@ -294,34 +335,35 @@ export async function fetchSurveyInvitesWithAnswers(
   }
 
   const invites = Array.from(
-    (await loadCampaignInvitesWithSnapshots(supabase, campaignKey)).values()
+    (await loadCampaignInvitesWithSnapshots(supabase, campaignKey, options)).values()
   );
   if (invites.length === 0) return [];
 
-  const tokens = invites.map((i) => i.token);
-  const { data: answerRows, error } = await supabase
-    .from("survey_answers")
-    .select("invite_token, question_id, row_key, answer_value")
-    .in("invite_token", tokens);
-
-  if (error) {
-    console.warn("[survey_answers fetch]", error.message);
-    return invites.map((i) => ({ ...i, answers: [] }));
-  }
-
-  const byToken = new Map<string, SurveyInviteWithAnswers["answers"]>();
-  for (const row of answerRows ?? []) {
-    const list = byToken.get(row.invite_token as string) ?? [];
-    list.push({
-      questionId: row.question_id as string,
-      rowKey: (row.row_key as string | null) ?? null,
-      value: row.answer_value as string,
-    });
-    byToken.set(row.invite_token as string, list);
-  }
+  const byToken = await fetchSurveyAnswersByTokens(
+    supabase,
+    invites.map((i) => i.token)
+  );
 
   return invites.map((invite) => ({
     ...invite,
     answers: byToken.get(invite.token) ?? [],
   }));
+}
+
+/** 응답·요약 관리 화면 — 서버에서 이미지 제거 후 전달 */
+export async function fetchSurveyInvitesWithAnswersForAdmin(
+  campaignKey: string
+): Promise<SurveyInviteWithAnswers[]> {
+  const res = await fetch(
+    `/api/survey/campaign/${encodeURIComponent(campaignKey)}/invites`,
+    { cache: "no-store" }
+  );
+  const data = (await res.json().catch(() => ({}))) as {
+    invites?: SurveyInviteWithAnswers[];
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error || "설문 응답 목록을 불러올 수 없습니다.");
+  }
+  return data.invites ?? [];
 }

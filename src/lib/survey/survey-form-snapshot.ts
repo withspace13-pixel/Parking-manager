@@ -27,6 +27,15 @@ export function parseSurveyFormSnapshot(raw: unknown): SurveyFormSnapshot | null
   return o;
 }
 
+/** 관리 화면 조회용 — 스냅샷에서 base64 상단 이미지 제거 */
+export function stripFormSnapshotImages(
+  snapshot: SurveyFormSnapshot | null | undefined
+): SurveyFormSnapshot | null | undefined {
+  if (!snapshot || snapshot.templateHeaderImageUrl == null) return snapshot;
+  const { templateHeaderImageUrl: _removed, ...rest } = snapshot;
+  return rest;
+}
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
