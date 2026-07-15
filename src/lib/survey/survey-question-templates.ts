@@ -46,7 +46,6 @@ function rowToTemplate(row: {
   name: string;
   title: string;
   intro_text: string;
-  header_image_url: string | null;
   questions_json: SurveyQuestionTemplateItem[];
   is_builtin: boolean;
 }): SurveyQuestionTemplate {
@@ -55,7 +54,8 @@ function rowToTemplate(row: {
     name: row.name,
     title: row.title,
     introText: row.intro_text,
-    headerImageUrl: row.header_image_url,
+    // 상단 이미지는 전역 공유 — 템플릿행에 두지 않음
+    headerImageUrl: null,
     questions: Array.isArray(row.questions_json) ? row.questions_json : [],
     isBuiltin: row.is_builtin,
   };
@@ -95,9 +95,10 @@ export async function fetchSurveyQuestionTemplateSummaries(
 
 export async function fetchSurveyQuestionTemplateById(
   supabase: SupabaseClient,
-  id: string
+  id: string,
+  options?: { force?: boolean }
 ): Promise<SurveyQuestionTemplate | null> {
-  if (templatesCache) {
+  if (!options?.force && templatesCache) {
     const cached = templatesCache.find((t) => t.id === id);
     if (cached) return cached;
   }
@@ -112,7 +113,7 @@ export async function fetchSurveyQuestionTemplateById(
 
   const { data, error } = await supabase
     .from("survey_question_templates")
-    .select("id, name, title, intro_text, header_image_url, questions_json, is_builtin")
+    .select("id, name, title, intro_text, questions_json, is_builtin")
     .eq("id", id)
     .maybeSingle();
 
@@ -132,7 +133,10 @@ export async function fetchSurveyQuestionTemplates(
 ): Promise<SurveyQuestionTemplate[]> {
   if (templatesCache) return templatesCache;
   if (isDevMode()) {
-    templatesCache = devSurveyStore.getQuestionTemplates();
+    templatesCache = devSurveyStore.getQuestionTemplates().map((t) => ({
+      ...t,
+      headerImageUrl: null,
+    }));
     templateSummariesCache = templatesCache.map((t) => ({
       id: t.id,
       name: t.name,
@@ -143,7 +147,7 @@ export async function fetchSurveyQuestionTemplates(
 
   const { data, error } = await supabase
     .from("survey_question_templates")
-    .select("id, name, title, intro_text, header_image_url, questions_json, is_builtin")
+    .select("id, name, title, intro_text, questions_json, is_builtin")
     .order("name");
 
   if (error) {
@@ -203,13 +207,13 @@ export async function saveSurveyQuestionTemplate(
       name: trimmed,
       title: snapshot.title,
       intro_text: snapshot.introText,
-      header_image_url: snapshot.headerImageUrl,
+      header_image_url: null,
       questions_json: snapshot.questions,
       is_builtin: false,
       created_at: now,
       updated_at: now,
     })
-    .select("id, name, title, intro_text, header_image_url, questions_json, is_builtin")
+    .select("id, name, title, intro_text, questions_json, is_builtin")
     .single();
 
   if (error) {
@@ -260,12 +264,12 @@ export async function updateSurveyQuestionTemplate(
       name: trimmed,
       title: snapshot.title,
       intro_text: snapshot.introText,
-      header_image_url: snapshot.headerImageUrl,
+      header_image_url: null,
       questions_json: snapshot.questions,
       updated_at: now,
     })
     .eq("id", id)
-    .select("id, name, title, intro_text, header_image_url, questions_json, is_builtin")
+    .select("id, name, title, intro_text, questions_json, is_builtin")
     .single();
 
   if (error) {
@@ -313,15 +317,18 @@ export async function applySurveyQuestionTemplate(
   const existing = await fetchSurveyCampaignSettings(supabase, campaignKey, {
     includeHeader: false,
   });
+  const { fetchSurveySharedHeaderImage } = await import("@/lib/survey/survey-shared-settings");
+  const sharedHeader = await fetchSurveySharedHeaderImage(supabase);
   const settings: SurveyCampaignSettings = {
     campaignKey,
     title: template.title,
     introText: template.introText,
-    headerImageUrl: template.headerImageUrl,
+    headerImageUrl: sharedHeader,
     completionMessage: existing.completionMessage,
   };
 
-  await upsertSurveyCampaignSettings(supabase, settings);
+  // 캠페인 행에는 이미지를 중복 저장하지 않음 (전역 공유 유지)
+  await upsertSurveyCampaignSettings(supabase, { ...settings, headerImageUrl: null });
   const questions = await replaceSurveyQuestions(supabase, campaignKey, template.questions);
   seedSurveyCampaignSettingsCache(settings);
 
@@ -340,13 +347,13 @@ export async function buildSurveyTemplateSnapshot(
 }> {
   const { fetchSurveyCampaignSettings } = await import("@/lib/survey/survey-campaign-settings");
   const [settings, questions] = await Promise.all([
-    fetchSurveyCampaignSettings(supabase, campaignKey),
+    fetchSurveyCampaignSettings(supabase, campaignKey, { includeHeader: false }),
     fetchSurveyQuestions(supabase, campaignKey),
   ]);
   return {
     title: settings.title,
     introText: settings.introText,
-    headerImageUrl: settings.headerImageUrl,
+    headerImageUrl: null,
     questions: questions.map((q) => ({
       questionType: q.questionType,
       title: q.title,

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { SurveyCampaignSettingsForm } from "@/components/survey/SurveyCampaignSettingsForm";
+import { ScaleGridQuestionEditor } from "@/components/survey/ScaleGridQuestionEditor";
 import { SurveyQuestionTemplateControls } from "@/components/survey/SurveyQuestionTemplateControls";
 import {
   createSurveyQuestion,
@@ -26,7 +27,15 @@ type Props = {
   campaignKey: string;
 };
 
-const TYPE_OPTIONS: SurveyQuestionType[] = ["scale", "scale_grid", "short", "long"];
+const TYPE_OPTIONS: SurveyQuestionType[] = [
+  "scale",
+  "scale_grid",
+  "yes_no",
+  "choice",
+  "nps",
+  "short",
+  "long",
+];
 
 export function SurveyQuestionsManager({ campaignKey }: Props) {
   const [questions, setQuestions] = useState<SurveyQuestion[]>([]);
@@ -77,14 +86,41 @@ export function SurveyQuestionsManager({ campaignKey }: Props) {
   const handleAdd = async (type: SurveyQuestionType) => {
     setSaving(true);
     try {
-      await createSurveyQuestion(supabase, campaignKey, {
-        questionType: type,
-        title: "질문",
-        required: true,
-        scaleMinLabel: type === "scale" || type === "scale_grid" ? "매우 불만족" : null,
-        scaleMaxLabel: type === "scale" || type === "scale_grid" ? "매우 만족" : null,
-        gridRows: type === "scale_grid" ? ["항목 1", "항목 2"] : [],
-      }, questions.length);
+      await createSurveyQuestion(
+        supabase,
+        campaignKey,
+        {
+          questionType: type,
+          title:
+            type === "nps"
+              ? "위드스페이스를 주변에 추천할 의향이 있으신가요?"
+              : type === "yes_no"
+                ? "이번 행사에 만족하셨나요?"
+                : type === "choice"
+                  ? "가장 만족스러운 점은 무엇인가요?"
+                  : "질문",
+          required: true,
+          scaleMinLabel:
+            type === "scale" || type === "scale_grid"
+              ? "매우 불만족"
+              : type === "nps"
+                ? "전혀 추천하지 않음"
+                : null,
+          scaleMaxLabel:
+            type === "scale" || type === "scale_grid"
+              ? "매우 만족"
+              : type === "nps"
+                ? "매우 추천함"
+                : null,
+          gridRows:
+            type === "scale_grid"
+              ? ["항목 1", "항목 2"]
+              : type === "choice"
+                ? ["선택지 1", "선택지 2", "선택지 3"]
+                : [],
+        },
+        questions.length
+      );
       await reload();
     } catch (err) {
       alert(err instanceof Error ? err.message : "질문 추가 실패");
@@ -208,10 +244,22 @@ export function SurveyQuestionsManager({ campaignKey }: Props) {
                 </select>
               </div>
               <div className="flex items-center gap-1">
-                <button type="button" disabled={idx === 0 || saving} onClick={() => void move(idx, -1)} className="rounded p-1 hover:bg-[var(--bg)] disabled:opacity-30" aria-label="위로">
+                <button
+                  type="button"
+                  disabled={idx === 0 || saving}
+                  onClick={() => void move(idx, -1)}
+                  className="rounded p-1 hover:bg-[var(--bg)] disabled:opacity-30"
+                  aria-label="위로"
+                >
                   <ChevronUp className="h-4 w-4" />
                 </button>
-                <button type="button" disabled={idx === questions.length - 1 || saving} onClick={() => void move(idx, 1)} className="rounded p-1 hover:bg-[var(--bg)] disabled:opacity-30" aria-label="아래로">
+                <button
+                  type="button"
+                  disabled={idx === questions.length - 1 || saving}
+                  onClick={() => void move(idx, 1)}
+                  className="rounded p-1 hover:bg-[var(--bg)] disabled:opacity-30"
+                  aria-label="아래로"
+                >
                   <ChevronDown className="h-4 w-4" />
                 </button>
                 <button
@@ -241,12 +289,16 @@ export function SurveyQuestionsManager({ campaignKey }: Props) {
               placeholder="질문"
             />
 
-            {(q.questionType === "scale" || q.questionType === "scale_grid") && (
+            {(q.questionType === "scale" || q.questionType === "nps") && (
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
                 <input
                   type="text"
                   defaultValue={q.scaleMinLabel ?? ""}
-                  placeholder="1점 라벨 (예: 매우 불만족)"
+                  placeholder={
+                    q.questionType === "nps"
+                      ? "0점 라벨 (예: 전혀 추천하지 않음)"
+                      : "1점 라벨 (예: 매우 불만족)"
+                  }
                   disabled={saving}
                   onBlur={(e) => void patchQuestion(q.id, { scaleMinLabel: e.target.value })}
                   className="rounded border border-[var(--border)] px-2 py-1.5 text-xs"
@@ -254,7 +306,11 @@ export function SurveyQuestionsManager({ campaignKey }: Props) {
                 <input
                   type="text"
                   defaultValue={q.scaleMaxLabel ?? ""}
-                  placeholder="5점 라벨 (예: 매우 만족)"
+                  placeholder={
+                    q.questionType === "nps"
+                      ? "10점 라벨 (예: 매우 추천함)"
+                      : "5점 라벨 (예: 매우 만족)"
+                  }
                   disabled={saving}
                   onBlur={(e) => void patchQuestion(q.id, { scaleMaxLabel: e.target.value })}
                   className="rounded border border-[var(--border)] px-2 py-1.5 text-xs"
@@ -263,10 +319,20 @@ export function SurveyQuestionsManager({ campaignKey }: Props) {
             )}
 
             {q.questionType === "scale_grid" && (
+              <ScaleGridQuestionEditor
+                question={q}
+                saving={saving}
+                onSave={(patch) => void patchQuestion(q.id, patch)}
+              />
+            )}
+
+            {q.questionType === "choice" && (
               <div className="mb-3">
-                <label className="mb-1 block text-xs text-[var(--text-muted)]">
-                  행 (한 줄에 하나)
-                </label>
+                <p className="mb-1 text-xs leading-relaxed text-[var(--text-muted)]">
+                  선택지 (한 줄에 하나) · 「기타」 자동 추가
+                  <br />
+                  응답자가 「기타」를 고르면 자유롭게 적을 수 있습니다.
+                </p>
                 <textarea
                   defaultValue={q.gridRows.join("\n")}
                   rows={4}
@@ -275,14 +341,22 @@ export function SurveyQuestionsManager({ campaignKey }: Props) {
                     const rows = e.target.value
                       .split("\n")
                       .map((s) => s.trim())
-                      .filter(Boolean);
-                    if (rows.join("\n") !== q.gridRows.join("\n")) {
+                      .filter(Boolean)
+                      .filter((s) => s !== "기타");
+                    if (rows.join("\n") !== q.gridRows.filter((r) => r !== "기타").join("\n")) {
                       void patchQuestion(q.id, { gridRows: rows });
                     }
                   }}
+                  placeholder={"선택지 1\n선택지 2\n선택지 3"}
                   className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-xs"
                 />
               </div>
+            )}
+
+            {q.questionType === "yes_no" && (
+              <p className="mb-3 text-xs text-[var(--text-muted)]">
+                응답 선택지: 예 / 아니오 / 모르겠음
+              </p>
             )}
 
             <label className="inline-flex items-center gap-2 text-xs text-[var(--text-muted)]">

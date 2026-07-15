@@ -37,7 +37,6 @@ export function surveyCampaignSnapshotFingerprint(
   return JSON.stringify({
     title: settings.title.trim(),
     introText: settings.introText.trim(),
-    headerImageUrl: settings.headerImageUrl?.trim() || null,
     questions: questionItems(questions),
   });
 }
@@ -46,7 +45,6 @@ export function surveyQuestionTemplateFingerprint(template: SurveyQuestionTempla
   return JSON.stringify({
     title: template.title.trim(),
     introText: template.introText.trim(),
-    headerImageUrl: template.headerImageUrl?.trim() || null,
     questions: template.questions.map(normalizeQuestionItem),
   });
 }

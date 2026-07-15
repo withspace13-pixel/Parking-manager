@@ -82,11 +82,13 @@ export function SurveySendTemplatePicker({
   const previewId = highlightId || value;
   const previewTemplate = previewId ? (previewCache[previewId] ?? null) : null;
 
-  const loadPreview = useCallback(async (id: string) => {
-    if (!id || previewCacheRef.current[id]) return;
+  const loadPreview = useCallback(async (id: string, force = false) => {
+    if (!id) return;
+    if (!force && previewCacheRef.current[id]) return;
     setLoadingPreviewId(id);
     try {
-      const tpl = await fetchSurveyQuestionTemplateById(supabase, id);
+      // 드롭다운 hover는 캐시 사용. force일 때만 DB 재조회
+      const tpl = await fetchSurveyQuestionTemplateById(supabase, id, { force });
       if (tpl) {
         previewCacheRef.current[id] = tpl;
         setPreviewCache((prev) => ({ ...prev, [id]: tpl }));
@@ -97,14 +99,15 @@ export function SurveySendTemplatePicker({
   }, []);
 
   useEffect(() => {
-    if (value) void loadPreview(value);
+    if (value) void loadPreview(value, false);
   }, [value, loadPreview]);
 
   useEffect(() => {
     if (!open) return;
     const initial = value || options[0]?.id || "";
     setHighlightId(initial);
-    if (initial) void loadPreview(initial);
+    // 메뉴를 열 때만 선택 템플릿을 한 번 최신화 (hover마다 재조회하지 않음)
+    if (initial) void loadPreview(initial, true);
   }, [open, value, options, loadPreview]);
 
   const computeMenuStyle = useCallback((): CSSProperties | null => {
@@ -193,7 +196,7 @@ export function SurveySendTemplatePicker({
 
   const handleHighlight = (id: string) => {
     setHighlightId(id);
-    void loadPreview(id);
+    void loadPreview(id, false);
   };
 
   return (

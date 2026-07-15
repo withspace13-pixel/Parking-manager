@@ -20,8 +20,15 @@ import {
   DEFAULT_SURVEY_CAMPAIGN_TITLE,
   DEFAULT_SURVEY_COMPLETION_MESSAGE,
   DEFAULT_SURVEY_INTRO_TEXT,
+  SURVEY_CHOICE_OTHER_LABEL,
   SURVEY_LONG_MAX,
+  SURVEY_OTHER_MAX,
   SURVEY_SHORT_MAX,
+  SURVEY_YES_NO_OPTIONS,
+  formatChoiceOtherValue,
+  isChoiceOtherValue,
+  parseChoiceOtherText,
+  surveyChoiceOptions,
 } from "@/lib/survey/types";
 import { resolveSurveyPageTitle } from "@/lib/survey/survey-page-title";
 
@@ -63,18 +70,15 @@ function ScaleInput({
   const rightLabel = maxLabel || "매우 만족";
 
   return (
-    <div className="mt-5">
-      <div className="mb-3 flex justify-between gap-4 text-base font-semibold leading-snug text-[var(--text)] sm:text-lg">
+    <div className="mt-4">
+      <div className="mb-2 flex justify-between gap-3 text-xs font-medium leading-snug text-[var(--text-muted)] sm:text-[13px]">
         <span className="max-w-[45%] text-left">{leftLabel}</span>
         <span className="max-w-[45%] text-right">{rightLabel}</span>
       </div>
       <div className="flex justify-between gap-2 sm:gap-3">
         {[1, 2, 3, 4, 5].map((n) => (
-          <label
-            key={n}
-            className="flex flex-1 flex-col items-center gap-2.5 py-1"
-          >
-            <span className="text-xl font-bold tabular-nums text-[var(--text)] sm:text-2xl">
+          <label key={n} className="flex flex-1 flex-col items-center gap-2 py-1">
+            <span className="text-base font-semibold tabular-nums text-[var(--text)] sm:text-lg">
               {n}
             </span>
             <input
@@ -83,11 +87,152 @@ function ScaleInput({
               value={String(n)}
               checked={value === String(n)}
               onChange={() => onChange(String(n))}
-              className="h-5 w-5 accent-[var(--primary)] sm:h-[1.35rem] sm:w-[1.35rem]"
+              className="h-5 w-5 accent-[var(--primary)] sm:h-[1.25rem] sm:w-[1.25rem]"
             />
           </label>
         ))}
       </div>
+    </div>
+  );
+}
+
+function NpsInput({
+  value,
+  onChange,
+  minLabel,
+  maxLabel,
+  name,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  minLabel?: string | null;
+  maxLabel?: string | null;
+  name: string;
+}) {
+  const leftLabel = minLabel || "전혀 추천하지 않음";
+  const rightLabel = maxLabel || "매우 추천함";
+
+  return (
+    <div className="mt-4">
+      <div className="mb-2 flex justify-between gap-3 text-xs font-medium leading-snug text-[var(--text-muted)]">
+        <span className="max-w-[45%] text-left">{leftLabel}</span>
+        <span className="max-w-[45%] text-right">{rightLabel}</span>
+      </div>
+      <div className="flex justify-between gap-0.5 overflow-x-auto sm:gap-1">
+        {Array.from({ length: 11 }, (_, n) => (
+          <label
+            key={n}
+            className="flex min-w-[1.75rem] flex-1 flex-col items-center gap-1.5 py-1"
+          >
+            <span className="text-sm font-semibold tabular-nums text-[var(--text)]">{n}</span>
+            <input
+              type="radio"
+              name={name}
+              value={String(n)}
+              checked={value === String(n)}
+              onChange={() => onChange(String(n))}
+              className="h-4 w-4 accent-[var(--primary)] sm:h-5 sm:w-5"
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function YesNoInput({
+  value,
+  onChange,
+  name,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  name: string;
+}) {
+  return (
+    <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+      {SURVEY_YES_NO_OPTIONS.map((opt) => (
+        <label
+          key={opt}
+          className={`flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-3 text-sm font-semibold transition ${
+            value === opt
+              ? "border-[var(--primary)] bg-[#EFF6FF] text-[var(--primary)]"
+              : "border-[var(--border)] bg-white text-[var(--text)] hover:bg-[#FAFAFA]"
+          }`}
+        >
+          <input
+            type="radio"
+            name={name}
+            value={opt}
+            checked={value === opt}
+            onChange={() => onChange(opt)}
+            className="h-4 w-4 accent-[var(--primary)]"
+          />
+          {opt}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function ChoiceInput({
+  options,
+  value,
+  onChange,
+  name,
+}: {
+  options: string[];
+  value: string;
+  onChange: (v: string) => void;
+  name: string;
+}) {
+  const selectedOther = isChoiceOtherValue(value);
+  const otherText = parseChoiceOtherText(value);
+  const selectedOption = selectedOther
+    ? SURVEY_CHOICE_OTHER_LABEL
+    : options.includes(value)
+      ? value
+      : "";
+
+  return (
+    <div className="mt-4 space-y-2">
+      {options.map((opt) => {
+        const isOther = opt === SURVEY_CHOICE_OTHER_LABEL;
+        const checked = isOther ? selectedOther : selectedOption === opt;
+        return (
+          <div key={opt}>
+            <label
+              className={`flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-3 text-sm font-semibold transition ${
+                checked
+                  ? "border-[var(--primary)] bg-[#EFF6FF] text-[var(--primary)]"
+                  : "border-[var(--border)] bg-white text-[var(--text)] hover:bg-[#FAFAFA]"
+              }`}
+            >
+              <input
+                type="radio"
+                name={name}
+                value={opt}
+                checked={checked}
+                onChange={() =>
+                  onChange(isOther ? formatChoiceOtherValue("") : opt)
+                }
+                className="h-4 w-4 accent-[var(--primary)]"
+              />
+              {opt}
+            </label>
+            {isOther && checked ? (
+              <input
+                type="text"
+                maxLength={SURVEY_OTHER_MAX}
+                value={otherText}
+                onChange={(e) => onChange(formatChoiceOtherValue(e.target.value))}
+                placeholder="기타 내용을 입력해 주세요"
+                className="mt-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]"
+              />
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -175,9 +320,9 @@ export function SurveyFormClient({ token }: Props) {
       }
 
       const apiUrl = isPreviewRequest
-        ? `/api/survey/${token}?preview=1&templateId=${encodeURIComponent(previewTemplateId)}`
+        ? `/api/survey/${token}?preview=1&templateId=${encodeURIComponent(previewTemplateId)}&_=${Date.now()}`
         : `/api/survey/${token}`;
-      const res = await fetch(apiUrl);
+      const res = await fetch(apiUrl, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "설문을 불러올 수 없습니다.");
@@ -362,7 +507,8 @@ export function SurveyFormClient({ token }: Props) {
                 key={q.id}
                 className="rounded-lg border border-[var(--border)] bg-white p-6 shadow-sm"
               >
-                <p className="text-base font-medium text-[var(--text)]">
+                <p className="text-lg font-bold leading-snug text-[var(--text)] sm:text-xl">
+                  <span className="mr-1.5 text-[var(--primary)]">Q{idx + 1}.</span>
                   {q.title}
                   {q.required && <span className="ml-1 text-red-500">*</span>}
                 </p>
@@ -377,11 +523,43 @@ export function SurveyFormClient({ token }: Props) {
                   />
                 )}
 
+                {q.questionType === "nps" && (
+                  <NpsInput
+                    name={`q-${q.id}`}
+                    value={getAnswer(q.id, null)}
+                    onChange={(v) => setAnswer(q.id, null, v)}
+                    minLabel={q.scaleMinLabel}
+                    maxLabel={q.scaleMaxLabel}
+                  />
+                )}
+
+                {q.questionType === "yes_no" && (
+                  <YesNoInput
+                    name={`q-${q.id}`}
+                    value={getAnswer(q.id, null)}
+                    onChange={(v) => setAnswer(q.id, null, v)}
+                  />
+                )}
+
+                {q.questionType === "choice" && (
+                  <ChoiceInput
+                    name={`q-${q.id}`}
+                    options={surveyChoiceOptions(q.gridRows)}
+                    value={getAnswer(q.id, null)}
+                    onChange={(v) => setAnswer(q.id, null, v)}
+                  />
+                )}
+
                 {q.questionType === "scale_grid" && (
-                  <div className="mt-4 space-y-6">
+                  <div className="mt-5 space-y-5">
                     {(q.gridRows.length > 0 ? q.gridRows : ["항목"]).map((row) => (
-                      <div key={row} className="border-t border-[var(--border)] pt-4 first:border-0 first:pt-0">
-                        <p className="mb-2 text-sm font-medium text-[var(--text)]">{row}</p>
+                      <div
+                        key={row}
+                        className="rounded-lg border border-[var(--border)] bg-[#FAFAFA] px-3 py-3 sm:px-4"
+                      >
+                        <p className="text-base font-bold leading-snug text-[var(--text)] sm:text-lg">
+                          {row}
+                        </p>
                         <ScaleInput
                           name={`q-${q.id}-${row}`}
                           value={getAnswer(q.id, row)}

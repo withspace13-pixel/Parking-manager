@@ -6,10 +6,13 @@ import { FileUp, ImageIcon, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { SurveyHeaderMedia } from "@/components/survey/SurveyHeaderMedia";
 import {
-  fetchSurveyCampaignHeaderImage,
   fetchSurveyCampaignSettings,
   upsertSurveyCampaignSettings,
 } from "@/lib/survey/survey-campaign-settings";
+import {
+  fetchSurveySharedHeaderImage,
+  upsertSurveySharedHeaderImage,
+} from "@/lib/survey/survey-shared-settings";
 import {
   readSurveyHeaderFile,
   SURVEY_HEADER_MAX_BYTES,
@@ -55,7 +58,7 @@ export function SurveyCampaignSettingsForm({
     setFileLabel(null);
     setHeaderLoading(true);
     try {
-      const header = await fetchSurveyCampaignHeaderImage(supabase, campaignKey);
+      const header = await fetchSurveySharedHeaderImage(supabase);
       if (header) {
         publishSettings({ ...s, headerImageUrl: header });
         setFileLabel("업로드됨");
@@ -83,7 +86,11 @@ export function SurveyCampaignSettingsForm({
   const persist = async (next: SurveyCampaignSettings) => {
     setSaving(true);
     try {
-      await upsertSurveyCampaignSettings(supabase, next);
+      // 제목·소개는 월별, 상단 이미지는 전역 공유
+      await Promise.all([
+        upsertSurveyCampaignSettings(supabase, { ...next, headerImageUrl: null }),
+        upsertSurveySharedHeaderImage(supabase, next.headerImageUrl),
+      ]);
       publishSettings(next);
       onSaved?.();
     } catch (err) {
@@ -132,8 +139,10 @@ export function SurveyCampaignSettingsForm({
               <ImageIcon className="h-4 w-4" />
             </span>
             <div>
-              <p className="text-sm font-semibold text-[var(--text)]">상단 이미지 (선택)</p>
-              <p className="text-xs text-[var(--text-muted)]">JPEG · PNG · PDF 중 1개</p>
+              <p className="text-sm font-semibold text-[var(--text)]">공통 상단 이미지</p>
+              <p className="text-xs text-[var(--text-muted)]">
+                모든 설문 템플릿에 동일 적용 · JPEG · PNG · PDF
+              </p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">

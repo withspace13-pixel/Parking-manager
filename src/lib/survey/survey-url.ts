@@ -15,9 +15,13 @@ export function buildSurveyPublicUrl(token: string): string {
   return base ? `${base}/survey/${token}` : `/survey/${token}`;
 }
 
-/** 발송 전 관리자 미리보기 — 스냅샷 저장 없이 템플릿만 반영 */
+/** 발송 전 관리자 미리보기 — 스냅샷 저장 없이 템플릿만 반영 (캐시 무력화) */
 export function buildSurveyPreviewUrl(token: string, templateId: string): string {
   const base = buildSurveyPublicUrl(token);
-  const params = new URLSearchParams({ preview: "1", templateId });
+  const params = new URLSearchParams({
+    preview: "1",
+    templateId,
+    _: String(Date.now()),
+  });
   return `${base}?${params.toString()}`;
 }

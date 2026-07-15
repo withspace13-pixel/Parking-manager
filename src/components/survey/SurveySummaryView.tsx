@@ -54,7 +54,11 @@ export function SurveySummaryView({ campaignKey }: Props) {
     for (const inv of submitted) {
       const textQs =
         inv.formSnapshot?.questions.filter(
-          (q) => q.questionType === "short" || q.questionType === "long"
+          (q) =>
+            q.questionType === "short" ||
+            q.questionType === "long" ||
+            q.questionType === "choice" ||
+            q.questionType === "yes_no"
         ) ?? [];
       for (const q of textQs) {
         const a = inv.answers.find(

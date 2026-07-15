@@ -6,6 +6,7 @@ import {
   fetchSurveyCampaignHeaderImage,
   fetchSurveyCampaignSettings,
 } from "@/lib/survey/survey-campaign-settings";
+import { fetchSurveySharedHeaderImage } from "@/lib/survey/survey-shared-settings";
 import { fetchSurveyQuestions } from "@/lib/survey/survey-questions";
 import { fetchSurveyQuestionTemplateById } from "@/lib/survey/survey-question-templates";
 import {
@@ -132,12 +133,14 @@ export async function buildSurveyFormSnapshot(
   if (isDevMode()) {
     const settings = devSurveyStore.getCampaignSettings(campaignKey);
     const questions = devSurveyStore.getQuestions(campaignKey);
+    const shared = await fetchSurveySharedHeaderImage(supabase);
     return {
       version: 1,
       frozenAt: new Date().toISOString(),
       title: settings.title,
       introText: settings.introText,
-      useCampaignHeader: Boolean(settings.headerImageUrl),
+      useCampaignHeader: Boolean(shared || settings.headerImageUrl),
+      templateHeaderImageUrl: null,
       questions: questions.map((q, i) => ({
         id: q.id,
         sortOrder: i,
@@ -151,9 +154,10 @@ export async function buildSurveyFormSnapshot(
     };
   }
 
-  const [settings, questions, header] = await Promise.all([
+  const [settings, questions, sharedHeader, header] = await Promise.all([
     fetchSurveyCampaignSettings(supabase, campaignKey, { includeHeader: false }),
     fetchSurveyQuestions(supabase, campaignKey),
+    fetchSurveySharedHeaderImage(supabase),
     fetchSurveyCampaignHeaderImage(supabase, campaignKey),
   ]);
 
@@ -162,7 +166,8 @@ export async function buildSurveyFormSnapshot(
     frozenAt: new Date().toISOString(),
     title: settings.title,
     introText: settings.introText,
-    useCampaignHeader: Boolean(header),
+    useCampaignHeader: Boolean(sharedHeader || header),
+    templateHeaderImageUrl: null,
     questions: questions.map((q, i) => ({
       id: q.id,
       sortOrder: i,
@@ -182,17 +187,20 @@ export async function buildSurveyFormSnapshotFromTemplate(
   template: SurveyQuestionTemplate,
   inviteToken: string
 ): Promise<SurveyFormSnapshot> {
+  // 상단 이미지는 전역 공유 — 스냅샷에 base64를 넣지 않음
   let useCampaignHeader = false;
-  let templateHeaderImageUrl: string | null = null;
-
-  if (template.headerImageUrl) {
-    templateHeaderImageUrl = template.headerImageUrl;
-  } else if (isDevMode()) {
+  if (isDevMode()) {
+    const shared = await fetchSurveySharedHeaderImage(supabase);
     const settings = devSurveyStore.getCampaignSettings(campaignKey);
-    useCampaignHeader = Boolean(settings.headerImageUrl);
+    useCampaignHeader = Boolean(shared || settings.headerImageUrl);
   } else {
-    const header = await fetchSurveyCampaignHeaderImage(supabase, campaignKey);
-    useCampaignHeader = Boolean(header);
+    const shared = await fetchSurveySharedHeaderImage(supabase);
+    if (shared) {
+      useCampaignHeader = true;
+    } else {
+      const header = await fetchSurveyCampaignHeaderImage(supabase, campaignKey);
+      useCampaignHeader = Boolean(header);
+    }
   }
 
   return {
@@ -201,7 +209,7 @@ export async function buildSurveyFormSnapshotFromTemplate(
     title: template.title,
     introText: template.introText,
     useCampaignHeader,
-    templateHeaderImageUrl,
+    templateHeaderImageUrl: null,
     templateId: template.id,
     templateName: template.name,
     questions: template.questions.map((q, i) => ({
@@ -223,10 +231,13 @@ export async function resolveSnapshotCampaignSettings(
   snapshot: SurveyFormSnapshot
 ): Promise<Pick<SurveyCampaignSettings, "title" | "introText" | "headerImageUrl">> {
   let headerImageUrl: string | null = null;
-  if (snapshot.templateHeaderImageUrl) {
+  // 신규 스냅샷의 임베드 이미지는 호환용으로만 사용. 신규 고정은 전역·캠페인 참조.
+  if (snapshot.useCampaignHeader) {
+    headerImageUrl =
+      (await fetchSurveySharedHeaderImage(supabase)) ??
+      (await fetchSurveyCampaignHeaderImage(supabase, campaignKey));
+  } else if (snapshot.templateHeaderImageUrl) {
     headerImageUrl = snapshot.templateHeaderImageUrl;
-  } else if (snapshot.useCampaignHeader) {
-    headerImageUrl = await fetchSurveyCampaignHeaderImage(supabase, campaignKey);
   }
   return {
     title: snapshot.title,
@@ -252,7 +263,9 @@ export async function freezeInviteSnapshot(
   ): Promise<SurveyFormSnapshot> => {
     let snapshot: SurveyFormSnapshot;
     if (options?.templateId) {
-      const template = await fetchSurveyQuestionTemplateById(supabase, options.templateId);
+      const template = await fetchSurveyQuestionTemplateById(supabase, options.templateId, {
+        force: true,
+      });
       if (!template) throw new Error("설문 템플릿을 찾을 수 없습니다.");
       snapshot = await buildSurveyFormSnapshotFromTemplate(
         supabase,
@@ -260,6 +273,10 @@ export async function freezeInviteSnapshot(
         template,
         token
       );
+      // 템플릿이 바뀌면 이전 스냅샷 ID를 이어서 쓰지 않음
+      if (existingSnapshot?.templateId && existingSnapshot.templateId !== options.templateId) {
+        return snapshot;
+      }
     } else {
       snapshot = await buildSurveyFormSnapshot(supabase, campaignKey);
     }
@@ -346,7 +363,7 @@ export async function getInvitePreviewForm(
   settings: Pick<SurveyCampaignSettings, "title" | "introText" | "headerImageUrl">;
   questions: SurveyQuestion[];
 }> {
-  const template = await fetchSurveyQuestionTemplateById(supabase, templateId);
+  const template = await fetchSurveyQuestionTemplateById(supabase, templateId, { force: true });
   if (!template) throw new Error("설문 템플릿을 찾을 수 없습니다.");
 
   const snapshot = await buildSurveyFormSnapshotFromTemplate(

@@ -31,28 +31,31 @@ export async function GET(
   if (!invite.submittedAt && isPreview && templateId) {
     try {
       const { settings, questions } = await getInvitePreviewForm(supabase, invite, templateId);
-      return NextResponse.json({
-        preview: true,
-        submitted: false,
-        settings: {
-          title: settings.title,
-          introText: settings.introText,
-          headerImageUrl: settings.headerImageUrl,
-          completionMessage: await fetchSurveyCampaignCompletionMessage(
-            supabase,
-            invite.campaignKey
-          ),
+      return NextResponse.json(
+        {
+          preview: true,
+          submitted: false,
+          settings: {
+            title: settings.title,
+            introText: settings.introText,
+            headerImageUrl: settings.headerImageUrl,
+            completionMessage: await fetchSurveyCampaignCompletionMessage(
+              supabase,
+              invite.campaignKey
+            ),
+          },
+          questions: questions.map((q) => ({
+            id: q.id,
+            questionType: q.questionType,
+            title: q.title,
+            required: q.required,
+            scaleMinLabel: q.scaleMinLabel,
+            scaleMaxLabel: q.scaleMaxLabel,
+            gridRows: q.gridRows,
+          })),
         },
-        questions: questions.map((q) => ({
-          id: q.id,
-          questionType: q.questionType,
-          title: q.title,
-          required: q.required,
-          scaleMinLabel: q.scaleMinLabel,
-          scaleMaxLabel: q.scaleMaxLabel,
-          gridRows: q.gridRows,
-        })),
-      });
+        { headers: { "Cache-Control": "no-store" } }
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "미리보기를 불러올 수 없습니다.";
       return NextResponse.json({ error: message }, { status: 400 });

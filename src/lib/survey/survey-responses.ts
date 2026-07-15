@@ -8,7 +8,15 @@ import {
 } from "@/lib/survey/survey-form-snapshot";
 import { fetchSurveyInviteByToken, invalidateSurveyInvitesCache } from "@/lib/survey/survey-invites";
 import type { SurveyAnswerInput, SurveyFormSnapshot, SurveyQuestion } from "@/lib/survey/types";
-import { SURVEY_LONG_MAX, SURVEY_SHORT_MAX } from "@/lib/survey/types";
+import {
+  SURVEY_LONG_MAX,
+  SURVEY_OTHER_MAX,
+  SURVEY_SHORT_MAX,
+  SURVEY_YES_NO_OPTIONS,
+  isChoiceOtherValue,
+  parseChoiceOtherText,
+  surveyChoiceOptions,
+} from "@/lib/survey/types";
 
 function lookupAnswerValue(
   qAnswers: Map<string | null, string> | undefined,
@@ -50,6 +58,28 @@ export function validateSurveyAnswers(
 
     if (q.questionType === "scale" && !/^[1-5]$/.test(val)) {
       return `「${q.title}」는 1~5 중 선택해 주세요.`;
+    }
+    if (q.questionType === "nps" && !/^(10|[0-9])$/.test(val)) {
+      return `「${q.title}」는 0~10 중 선택해 주세요.`;
+    }
+    if (q.questionType === "yes_no") {
+      if (!(SURVEY_YES_NO_OPTIONS as readonly string[]).includes(val)) {
+        return `「${q.title}」는 예 / 아니오 / 모르겠음 중 선택해 주세요.`;
+      }
+    }
+    if (q.questionType === "choice") {
+      const options = surveyChoiceOptions(q.gridRows);
+      if (isChoiceOtherValue(val)) {
+        const otherText = parseChoiceOtherText(val);
+        if (q.required && !otherText) {
+          return `「${q.title}」의 기타 내용을 입력해 주세요.`;
+        }
+        if (otherText.length > SURVEY_OTHER_MAX) {
+          return `「${q.title}」의 기타는 ${SURVEY_OTHER_MAX}자 이내로 입력해 주세요.`;
+        }
+      } else if (!options.includes(val)) {
+        return `「${q.title}」의 선택지가 올바르지 않습니다.`;
+      }
     }
     if (q.questionType === "short" && val.length > SURVEY_SHORT_MAX) {
       return `「${q.title}」는 ${SURVEY_SHORT_MAX}자 이내로 입력해 주세요.`;
@@ -120,7 +150,7 @@ export async function submitSurveyAnswers(
 export type SurveyScaleSummary = {
   questionId: string;
   title: string;
-  type: "scale" | "scale_grid";
+  type: "scale" | "scale_grid" | "nps";
   rowKey?: string;
   average: number;
   count: number;
@@ -190,6 +220,26 @@ export function buildSurveySummary(
           bucket.distribution[a.value] = (bucket.distribution[a.value] ?? 0) + 1;
           buckets.set(key, bucket);
         }
+      } else if (q.questionType === "nps") {
+        const a = inv.answers.find((x) => x.questionId === q.id && x.rowKey == null);
+        if (!a || !/^(10|[0-9])$/.test(a.value)) continue;
+        const key = summaryBucketKey("nps", q.title);
+        const emptyDist: Record<string, number> = {};
+        for (let i = 0; i <= 10; i++) emptyDist[String(i)] = 0;
+        const bucket =
+          buckets.get(key) ??
+          ({
+            questionId: q.id,
+            title: q.title,
+            type: "nps" as const,
+            average: 0,
+            count: 0,
+            distribution: emptyDist,
+            values: [],
+          });
+        bucket.values.push(Number(a.value));
+        bucket.distribution[a.value] = (bucket.distribution[a.value] ?? 0) + 1;
+        buckets.set(key, bucket);
       }
     }
   }

@@ -154,6 +154,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     SurveyQuestionTemplateSummary[]
   >([]);
   const [sendTemplateId, setSendTemplateId] = useState("");
+  const [applyingTemplate, setApplyingTemplate] = useState(false);
   const [sendTemplateOverrides, setSendTemplateOverrides] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -553,6 +554,46 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
       }));
     }
     window.open(buildSurveyPreviewUrl(inviteToken, templateId), "_blank", "noopener,noreferrer");
+  };
+
+  /** 선택한 설문 템플릿을 해당 담당자 링크에 즉시 고정 (미리보기·실링크 동일) */
+  const handleApplySurveyTemplate = async () => {
+    if (!selected) return;
+    const templateId = resolveSendTemplateId(selected.id);
+    if (!templateId) {
+      alert("반영할 설문 템플릿을 선택해 주세요.");
+      return;
+    }
+    const org = orgOverrides[selected.id] ?? selected.displayOrgName;
+    const manager = managerOverrides[selected.id] ?? selected.manager;
+    setApplyingTemplate(true);
+    try {
+      let inviteToken = "";
+      const existingUrl = surveyUrls[selected.id];
+      if (existingUrl) {
+        inviteToken = existingUrl.split("/").filter(Boolean).pop()?.split("?")[0] ?? "";
+      }
+      if (!inviteToken) {
+        const map = await ensureSurveyInvitesForRecipients(supabase, yearMonth, [
+          { id: selected.id, managerName: manager, orgName: org },
+        ]);
+        const invite = map.get(selected.id);
+        if (!invite) throw new Error("설문 링크를 만들지 못했습니다.");
+        inviteToken = invite.token;
+        setSurveyUrls((prev) => ({
+          ...prev,
+          [selected.id]: buildSurveyPublicUrl(invite.token),
+        }));
+      }
+      await freezeInviteSnapshot(supabase, inviteToken, { templateId });
+      showFeedback(
+        "선택한 설문 템플릿이 링크에 반영되었습니다. 미리보기·설문 링크를 새로고침하면 바로 보입니다."
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "설문 템플릿 반영에 실패했습니다.");
+    } finally {
+      setApplyingTemplate(false);
+    }
   };
 
   const handleSend = async (recipient: SurveyRecipient) => {
@@ -1057,7 +1098,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
                       />
                     </div>
                   </div>
-                  <div className="mb-3">
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => void handleSurveyPreview()}
@@ -1067,8 +1108,20 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
                       <ExternalLink className="h-3.5 w-3.5" />
                       설문 미리보기
                     </button>
-                    <p className="mt-1 text-xs text-[var(--text-muted)]">
-                      선택한 템플릿으로 새 탭에서 확인합니다. 미리보기에서는 제출할 수 없습니다.
+                    <button
+                      type="button"
+                      onClick={() => void handleApplySurveyTemplate()}
+                      disabled={applyingTemplate || !resolveSendTemplateId(selected.id)}
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {applyingTemplate ? "반영 중…" : "반영하기"}
+                    </button>
+                    <p className="w-full text-xs leading-relaxed text-[var(--text-muted)]">
+                      선택한 템플릿으로 새 탭에서 확인합니다.
+                      <br />
+                      <span className="inline-block whitespace-nowrap">
+                        템플릿 변경·수정 후 반영하기를 누르면 설문 링크에도 바로 적용됩니다.
+                      </span>
                     </p>
                   </div>
                   {!displayPhone && (
