@@ -7,6 +7,8 @@ import { fetchSurveyInviteByToken } from "@/lib/survey/survey-invites";
 import { submitSurveyAnswers } from "@/lib/survey/survey-responses";
 import type { SurveyAnswerInput } from "@/lib/survey/types";
 
+export const dynamic = "force-dynamic";
+
 function getSupabase() {
   const url = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";

@@ -14,3 +14,12 @@
 - [x] ThankYouSmsPanel / SatisfactionSurveyPanel — 실제 상태 반영, 발송 완료 취소
 - [x] `.env.local.example` 업데이트
 - [x] 빌드 확인
+
+# 반영하기 후에도 템플릿 1로 보이는 문제 (2026-07-15)
+
+- [x] freezeInviteSnapshot: templateId 지정 시 이전 스냅샷 병합 금지
+- [x] DB update 후 select로 저장 검증 (0행·templateId 불일치 시 에러)
+- [x] POST `/api/survey/[token]/freeze` — 서버에서 고정 (클라이언트 isDevMode/localStorage 우회)
+- [x] 발송·반영하기는 freeze API 사용
+- [x] 설문 GET 캐시 무력화 (`force-dynamic` + `?_=` 타임스탬프)
+- [ ] 배포 후 템플릿 2 선택 → 반영하기 → 실링크에서 템플릿 2인지 확인

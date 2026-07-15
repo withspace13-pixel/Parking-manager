@@ -1,3 +1,15 @@
+2026-07-15 — 반영하기 후에도 공개 링크가 예전 템플릿
+
+## 원인
+- 공개 링크는 `survey_invites.form_snapshot`만 봄. 「반영하기」는 이 스냅샷을 다시 고정해야 함.
+- 브라우저에서 `freezeInviteSnapshot`을 호출하면 `isDevMode()`(특히 `localStorage` force-dev)일 때 **로컬 store에만** 쓰고, `survey.withspace.kr`는 Supabase DB를 읽어 예전 템플릿이 남음.
+- update가 0행이어도 error 없이 성공으로 처리되던 경우도 있음.
+
+## 결정
+- 반영·발송 고정은 `POST /api/survey/[token]/freeze`로 서버에서만 수행 (서버는 force-dev와 무관).
+- `templateId`가 있으면 이전 스냅샷과 ID/내용 병합하지 않고 템플릿으로 완전 교체.
+- 저장 후 `select`로 `templateId` 일치 검증. 공개 GET은 `force-dynamic` + 캐시버스트.
+
 2026-07-02
 
 - 무료 플랜 Egress 절감을 위해 문자 상태 추적은 실시간성보다 조회량 축소를 우선한다.

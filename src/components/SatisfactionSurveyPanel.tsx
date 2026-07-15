@@ -50,7 +50,6 @@ import {
   type SurveyMessageBuildParams,
   type SurveyRecipient,
 } from "@/lib/survey-messaging";
-import { freezeInviteSnapshot } from "@/lib/survey/survey-form-snapshot";
 import {
   fetchSurveyQuestionTemplateSummaries,
   type SurveyQuestionTemplateSummary,
@@ -59,7 +58,29 @@ import { SurveySendTemplatePicker } from "@/components/survey/SurveySendTemplate
 import {
   ensureSurveyInvitesForRecipients,
 } from "@/lib/survey/survey-invites";
-import { buildSurveyPreviewUrl, buildSurveyPublicUrl } from "@/lib/survey/survey-url";
+import {
+  buildSurveyPreviewUrl,
+  buildSurveyPublicUrl,
+  extractSurveyInviteToken,
+} from "@/lib/survey/survey-url";
+
+async function freezeSurveyInviteTemplate(token: string, templateId: string) {
+  const res = await fetch(`/api/survey/${encodeURIComponent(token)}/freeze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({ templateId }),
+  });
+  const data = (await res.json()) as {
+    error?: string;
+    templateName?: string | null;
+    templateId?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error || "설문 템플릿 반영에 실패했습니다.");
+  }
+  return data;
+}
 
 type Props = {
   projects: Project[];
@@ -536,7 +557,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     let inviteToken = "";
     const existingUrl = surveyUrls[selected.id];
     if (existingUrl) {
-      inviteToken = existingUrl.split("/").filter(Boolean).pop()?.split("?")[0] ?? "";
+      inviteToken = extractSurveyInviteToken(existingUrl);
     }
     if (!inviteToken) {
       const map = await ensureSurveyInvitesForRecipients(supabase, yearMonth, [
@@ -566,12 +587,14 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     }
     const org = orgOverrides[selected.id] ?? selected.displayOrgName;
     const manager = managerOverrides[selected.id] ?? selected.manager;
+    const templateLabel =
+      sendTemplateSummaries.find((t) => t.id === templateId)?.name ?? "선택한 템플릿";
     setApplyingTemplate(true);
     try {
       let inviteToken = "";
       const existingUrl = surveyUrls[selected.id];
       if (existingUrl) {
-        inviteToken = existingUrl.split("/").filter(Boolean).pop()?.split("?")[0] ?? "";
+        inviteToken = extractSurveyInviteToken(existingUrl);
       }
       if (!inviteToken) {
         const map = await ensureSurveyInvitesForRecipients(supabase, yearMonth, [
@@ -585,9 +608,10 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
           [selected.id]: buildSurveyPublicUrl(invite.token),
         }));
       }
-      await freezeInviteSnapshot(supabase, inviteToken, { templateId });
+      const result = await freezeSurveyInviteTemplate(inviteToken, templateId);
+      const appliedName = result.templateName?.trim() || templateLabel;
       showFeedback(
-        "선택한 설문 템플릿이 링크에 반영되었습니다. 미리보기·설문 링크를 새로고침하면 바로 보입니다."
+        `「${appliedName}」이(가) 설문 링크에 반영되었습니다. 링크를 새로고침하면 바로 보입니다.`
       );
     } catch (err) {
       alert(err instanceof Error ? err.message : "설문 템플릿 반영에 실패했습니다.");
@@ -616,7 +640,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
       surveyUrl = buildSurveyPublicUrl(invite.token);
       setSurveyUrls((prev) => ({ ...prev, [recipient.id]: surveyUrl }));
     } else {
-      inviteToken = surveyUrl.split("/").filter(Boolean).pop() ?? "";
+      inviteToken = extractSurveyInviteToken(surveyUrl);
     }
     if (inviteToken) {
       const templateId = resolveSendTemplateId(recipient.id);
@@ -624,7 +648,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
         alert("발송할 설문 템플릿을 선택해 주세요.");
         return;
       }
-      await freezeInviteSnapshot(supabase, inviteToken, { templateId });
+      await freezeSurveyInviteTemplate(inviteToken, templateId);
     }
     const preview = resolveBody(recipient, org, manager, surveyUrl);
     const phone = resolveRecipientPhone(recipient, phoneOverrides);

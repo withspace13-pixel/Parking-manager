@@ -261,32 +261,28 @@ export async function freezeInviteSnapshot(
     campaignKey: string,
     existingSnapshot: SurveyFormSnapshot | null | undefined
   ): Promise<SurveyFormSnapshot> => {
-    let snapshot: SurveyFormSnapshot;
     if (options?.templateId) {
       const template = await fetchSurveyQuestionTemplateById(supabase, options.templateId, {
         force: true,
       });
       if (!template) throw new Error("설문 템플릿을 찾을 수 없습니다.");
-      snapshot = await buildSurveyFormSnapshotFromTemplate(
-        supabase,
-        campaignKey,
-        template,
-        token
-      );
-      // 템플릿이 바뀌면 이전 스냅샷 ID를 이어서 쓰지 않음
-      if (existingSnapshot?.templateId && existingSnapshot.templateId !== options.templateId) {
-        return snapshot;
-      }
-    } else {
-      snapshot = await buildSurveyFormSnapshot(supabase, campaignKey);
+      // 명시 템플릿 고정 시 이전 스냅샷과 병합하지 않음 (내용·ID 전부 템플릿 기준)
+      return buildSurveyFormSnapshotFromTemplate(supabase, campaignKey, template, token);
     }
+    const snapshot = await buildSurveyFormSnapshot(supabase, campaignKey);
     return preserveSnapshotQuestionIds(existingSnapshot, snapshot);
   };
 
   if (isDevMode()) {
     const invite = devSurveyStore.getInviteByToken(token);
     if (!invite) throw new Error("유효하지 않은 설문 링크입니다.");
-    if (invite.submittedAt && invite.formSnapshot) return invite.formSnapshot;
+    if (invite.submittedAt) {
+      if (options?.templateId) {
+        throw new Error("이미 제출된 설문에는 템플릿을 반영할 수 없습니다.");
+      }
+      if (invite.formSnapshot) return invite.formSnapshot;
+      throw new Error("제출된 설문에 스냅샷이 없습니다.");
+    }
     const snapshot = await resolveSnapshot(invite.campaignKey, invite.formSnapshot);
     devSurveyStore.setInviteSnapshot(token, snapshot);
     return snapshot;
@@ -295,20 +291,35 @@ export async function freezeInviteSnapshot(
   const invite = await fetchSurveyInviteByToken(supabase, token);
   if (!invite) throw new Error("유효하지 않은 설문 링크입니다.");
   if (invite.submittedAt) {
+    if (options?.templateId) {
+      throw new Error("이미 제출된 설문에는 템플릿을 반영할 수 없습니다.");
+    }
     if (invite.formSnapshot) return invite.formSnapshot;
     throw new Error("제출된 설문에 스냅샷이 없습니다.");
   }
 
   const snapshot = await resolveSnapshot(invite.campaignKey, invite.formSnapshot);
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("survey_invites")
     .update({ form_snapshot: snapshot })
     .eq("token", token)
-    .is("submitted_at", null);
+    .is("submitted_at", null)
+    .select("token, form_snapshot")
+    .maybeSingle();
 
   if (error) throw new Error(error.message);
+  if (!data) {
+    throw new Error("설문 스냅샷을 저장하지 못했습니다. 링크를 확인한 뒤 다시 시도해 주세요.");
+  }
+
+  const saved = parseSurveyFormSnapshot(data.form_snapshot);
+  if (!saved) throw new Error("저장된 설문 스냅샷 형식이 올바르지 않습니다.");
+  if (options?.templateId && saved.templateId !== options.templateId) {
+    throw new Error("선택한 템플릿이 링크에 저장되지 않았습니다. 다시 반영해 주세요.");
+  }
+
   invalidateSurveyInvitesCache(invite.campaignKey);
-  return snapshot;
+  return saved;
 }
 
 export async function getInviteDisplayForm(

@@ -321,7 +321,7 @@ export function SurveyFormClient({ token }: Props) {
 
       const apiUrl = isPreviewRequest
         ? `/api/survey/${token}?preview=1&templateId=${encodeURIComponent(previewTemplateId)}&_=${Date.now()}`
-        : `/api/survey/${token}`;
+        : `/api/survey/${token}?_=${Date.now()}`;
       const res = await fetch(apiUrl, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) {
