@@ -2,7 +2,7 @@
 
 // 감사문자 수동 발송·미리보기 (종료일 일 단위)
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, ClipboardList, PlusCircle, Send } from "lucide-react";
+import { ChevronDown, ChevronRight, ClipboardList, PlusCircle, Send } from "lucide-react";
 import type { Project } from "@/lib/supabase";
 import { navigateToNewProject } from "@/lib/navigate";
 import { supabase } from "@/lib/supabase";
@@ -97,6 +97,7 @@ export function ThankYouSmsPanel({ projects }: Props) {
   const [managerOverrides, setManagerOverrides] = useState<Record<string, string>>({});
   const [phoneOverrides, setPhoneOverrides] = useState<Record<string, string>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
+  const [sendingAll, setSendingAll] = useState(false);
   const [bulkTemplates, setBulkTemplates] = useState<Record<string, string>>({});
   const [individualMessages, setIndividualMessages] = useState<
     Record<string, Record<string, string>>
@@ -412,23 +413,25 @@ export function ThankYouSmsPanel({ projects }: Props) {
     }
   };
 
-  const handleSend = async (recipient: ThankYouRecipient) => {
-    if (recipient.sendStatus !== "pending") return;
+  const handleSend = async (recipient: ThankYouRecipient, options?: { quiet?: boolean }) => {
+    if (recipient.sendStatus !== "pending") return "skip" as const;
     const org = orgOverrides[recipient.id] ?? recipient.displayOrgName;
     const manager = managerOverrides[recipient.id] ?? recipient.manager;
     const preview = resolveBody(recipient, org, manager);
     const phone = resolveRecipientPhone(recipient, phoneOverrides);
     if (!phone) {
-      alert("연락처가 없어 발송할 수 없습니다.");
-      return;
+      if (!options?.quiet) alert("연락처가 없어 발송할 수 없습니다.");
+      return "fail" as const;
     }
     if (solapiConfigured === false) {
-      alert(
-        "솔라피 API가 설정되지 않았습니다.\n.env.local에 SOLAPI_API_KEY, SOLAPI_API_SECRET, SOLAPI_SENDER를 추가한 뒤 개발 서버를 재시작해 주세요."
-      );
-      return;
+      if (!options?.quiet) {
+        alert(
+          "솔라피 API가 설정되지 않았습니다.\n.env.local에 SOLAPI_API_KEY, SOLAPI_API_SECRET, SOLAPI_SENDER를 추가한 뒤 개발 서버를 재시작해 주세요."
+        );
+      }
+      return "fail" as const;
     }
-    setSendingId(recipient.id);
+    if (!options?.quiet) setSendingId(recipient.id);
     try {
       const result = await sendMessageViaApi({ to: phone, text: preview });
       await appendSmsSendLog(
@@ -453,17 +456,61 @@ export function ThankYouSmsPanel({ projects }: Props) {
       }
 
       if (shouldMarkRecipientAsSent(result)) {
-        const next = new Set(sentIds);
-        next.add(recipient.id);
-        setSentIds(next);
+        setSentIds((prev) => {
+          const next = new Set(prev);
+          next.add(recipient.id);
+          return next;
+        });
         void addRecipientSentId(supabase, "thank_you", targetDate, recipient.id);
       }
 
-      showFeedback(describeSmsSendResult(result));
+      if (!options?.quiet) showFeedback(describeSmsSendResult(result));
+      return "ok" as const;
     } catch (err) {
-      showFeedback(err instanceof Error ? err.message : "문자 발송에 실패했습니다.");
+      if (!options?.quiet) {
+        showFeedback(err instanceof Error ? err.message : "문자 발송에 실패했습니다.");
+      }
+      return "fail" as const;
+    } finally {
+      if (!options?.quiet) setSendingId(null);
+    }
+  };
+
+  const handleSendAll = async () => {
+    const targets = sortedDisplayRecipients.filter((r) => r.sendStatus === "pending");
+    if (targets.length === 0) {
+      alert("일괄 발송할 미발송 대상자가 없습니다.");
+      return;
+    }
+    if (solapiConfigured === false) {
+      alert(
+        "솔라피 API가 설정되지 않았습니다.\n.env.local에 SOLAPI_API_KEY, SOLAPI_API_SECRET, SOLAPI_SENDER를 추가한 뒤 개발 서버를 재시작해 주세요."
+      );
+      return;
+    }
+    const ok = confirm(
+      `미발송 ${targets.length}명에게 감사문자를 일괄 발송할까요?\n(이미 발송 완료·연락처 없음은 제외됩니다.)`
+    );
+    if (!ok) return;
+
+    setSendingAll(true);
+    let success = 0;
+    let failed = 0;
+    try {
+      for (const r of targets) {
+        setSendingId(r.id);
+        const result = await handleSend(r, { quiet: true });
+        if (result === "ok") success++;
+        else failed++;
+      }
+      if (failed > 0) {
+        showFeedback(`일괄 발송 완료 · 성공 ${success}명, 실패 ${failed}명.`);
+      } else {
+        showFeedback(`일괄 발송 완료 · ${success}명에게 발송했습니다.`);
+      }
     } finally {
       setSendingId(null);
+      setSendingAll(false);
     }
   };
 
@@ -606,19 +653,35 @@ export function ThankYouSmsPanel({ projects }: Props) {
                   </p>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => setLogModalOpen(true)}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-[#F8FAFC]"
-              >
-                <ClipboardList className="h-3.5 w-3.5" />
-                발송 기록
-                {countCampaignSmsLogs("thank_you", targetDate) > 0 && (
-                  <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
-                    {countCampaignSmsLogs("thank_you", targetDate)}
-                  </span>
-                )}
-              </button>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleSendAll()}
+                  disabled={
+                    sendingAll ||
+                    sendingId !== null ||
+                    stats.pending === 0 ||
+                    solapiConfigured === false
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-md bg-[var(--primary)] px-2.5 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  {sendingAll ? "일괄 발송 중…" : `일괄 발송${stats.pending > 0 ? ` (${stats.pending})` : ""}`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLogModalOpen(true)}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-[#F8FAFC]"
+                >
+                  <ClipboardList className="h-3.5 w-3.5" />
+                  발송 기록
+                  {countCampaignSmsLogs("thank_you", targetDate) > 0 && (
+                    <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
+                      {countCampaignSmsLogs("thank_you", targetDate)}
+                    </span>
+                  )}
+                </button>
+              </div>
             </div>
             <ul className="max-h-[32rem] divide-y divide-[var(--border)] overflow-y-auto">
               {filteredRecipients.length === 0 ? (
@@ -653,17 +716,6 @@ export function ThankYouSmsPanel({ projects }: Props) {
                           }
                         }}
                       >
-                        <div className="mt-0.5 shrink-0">
-                          {isSent ? (
-                            <CheckCircle2 className="h-5 w-5 text-emerald-600" aria-label="발송 완료" />
-                          ) : (
-                            <span
-                              className={`inline-block h-5 w-5 rounded-full border-2 ${
-                                active ? "border-[var(--primary)] bg-white" : "border-[var(--border)] bg-white"
-                              }`}
-                            />
-                          )}
-                        </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-semibold text-[var(--text)]">
@@ -725,6 +777,7 @@ export function ThankYouSmsPanel({ projects }: Props) {
                           type="button"
                           disabled={
                             r.sendStatus !== "pending" ||
+                            sendingAll ||
                             sendingId === r.id ||
                             pendingRecipientIds.has(r.id)
                           }

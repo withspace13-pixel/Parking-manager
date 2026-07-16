@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, ClipboardList, ExternalLink, PlusCircle, Send } from "lucide-react";
+import { ChevronDown, ChevronRight, ClipboardList, ExternalLink, PlusCircle, Send } from "lucide-react";
 import type { Project } from "@/lib/supabase";
 import { navigateToNewProject } from "@/lib/navigate";
 import { supabase } from "@/lib/supabase";
@@ -156,6 +156,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
   const [managerOverrides, setManagerOverrides] = useState<Record<string, string>>({});
   const [phoneOverrides, setPhoneOverrides] = useState<Record<string, string>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
+  const [sendingAll, setSendingAll] = useState(false);
   const [bulkTemplates, setBulkTemplates] = useState<Record<string, string>>({});
   const [individualMessages, setIndividualMessages] = useState<
     Record<string, Record<string, string>>
@@ -176,6 +177,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
   >([]);
   const [sendTemplateId, setSendTemplateId] = useState("");
   const [applyingTemplate, setApplyingTemplate] = useState(false);
+  const [applyingTemplateAll, setApplyingTemplateAll] = useState(false);
   const [sendTemplateOverrides, setSendTemplateOverrides] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -620,8 +622,98 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     }
   };
 
-  const handleSend = async (recipient: SurveyRecipient) => {
-    if (recipient.sendStatus !== "pending") return;
+  /** 선택 템플릿을 이 달 전체 발송 대상자 링크에 일괄 고정 */
+  const handleApplySurveyTemplateToAll = async () => {
+    if (!selected) return;
+    const templateId = resolveSendTemplateId(selected.id);
+    if (!templateId) {
+      alert("반영할 설문 템플릿을 선택해 주세요.");
+      return;
+    }
+    const targets = sortedDisplayRecipients;
+    if (targets.length === 0) {
+      alert("반영할 발송 대상자가 없습니다.");
+      return;
+    }
+    const templateLabel =
+      sendTemplateSummaries.find((t) => t.id === templateId)?.name ?? "선택한 템플릿";
+    const ok = confirm(
+      `「${templateLabel}」을(를) 이 달 발송 대상 ${targets.length}명 전원에게 반영할까요?\n(이미 제출한 링크는 건너뜁니다.)`
+    );
+    if (!ok) return;
+
+    setApplyingTemplateAll(true);
+    try {
+      const map = await ensureSurveyInvitesForRecipients(
+        supabase,
+        yearMonth,
+        targets.map((r) => ({
+          id: r.id,
+          managerName: managerOverrides[r.id] ?? r.manager,
+          orgName: orgOverrides[r.id] ?? r.displayOrgName,
+        }))
+      );
+      const nextUrls: Record<string, string> = {};
+      map.forEach((inv, recipientId) => {
+        nextUrls[recipientId] = buildSurveyPublicUrl(inv.token);
+      });
+      setSurveyUrls((prev) => ({ ...prev, ...nextUrls }));
+
+      let applied = 0;
+      let skipped = 0;
+      let failed = 0;
+      let appliedName = templateLabel;
+      for (const r of targets) {
+        const invite = map.get(r.id);
+        const token =
+          invite?.token ||
+          extractSurveyInviteToken(nextUrls[r.id] || surveyUrls[r.id] || "");
+        if (!token) {
+          failed++;
+          continue;
+        }
+        try {
+          const result = await freezeSurveyInviteTemplate(token, templateId);
+          if (result.templateName?.trim()) appliedName = result.templateName.trim();
+          applied++;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "";
+          if (message.includes("제출된")) skipped++;
+          else failed++;
+        }
+      }
+
+      const overrideForAll: Record<string, string> = {};
+      for (const r of targets) overrideForAll[r.id] = templateId;
+      setSendTemplateOverrides((prev) => ({
+        ...prev,
+        [yearMonth]: { ...prev[yearMonth], ...overrideForAll },
+      }));
+      setSendTemplateId(templateId);
+      writeStoredSendTemplateId(yearMonth, templateId);
+
+      if (failed > 0) {
+        showFeedback(
+          `「${appliedName}」 ${applied}명 반영, ${skipped}명 제출됨·건너뜀, ${failed}명 실패.`
+        );
+      } else if (skipped > 0) {
+        showFeedback(
+          `「${appliedName}」 ${applied}명에게 반영했습니다. (제출됨 ${skipped}명은 건너뜀)`
+        );
+      } else {
+        showFeedback(
+          `「${appliedName}」을(를) ${applied}명 전원에게 반영했습니다.`
+        );
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "전체 반영에 실패했습니다.");
+    } finally {
+      setApplyingTemplateAll(false);
+    }
+  };
+
+  const handleSend = async (recipient: SurveyRecipient, options?: { quiet?: boolean }) => {
+    if (recipient.sendStatus !== "pending") return "skip" as const;
     const org = orgOverrides[recipient.id] ?? recipient.displayOrgName;
     const manager = managerOverrides[recipient.id] ?? recipient.manager;
     let surveyUrl = surveyUrls[recipient.id];
@@ -635,7 +727,10 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
         },
       ]);
       const invite = map.get(recipient.id);
-      if (!invite) throw new Error("설문 링크를 만들지 못했습니다.");
+      if (!invite) {
+        if (!options?.quiet) alert("설문 링크를 만들지 못했습니다.");
+        return "fail" as const;
+      }
       inviteToken = invite.token;
       surveyUrl = buildSurveyPublicUrl(invite.token);
       setSurveyUrls((prev) => ({ ...prev, [recipient.id]: surveyUrl }));
@@ -645,24 +740,26 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     if (inviteToken) {
       const templateId = resolveSendTemplateId(recipient.id);
       if (!templateId) {
-        alert("발송할 설문 템플릿을 선택해 주세요.");
-        return;
+        if (!options?.quiet) alert("발송할 설문 템플릿을 선택해 주세요.");
+        return "fail" as const;
       }
       await freezeSurveyInviteTemplate(inviteToken, templateId);
     }
     const preview = resolveBody(recipient, org, manager, surveyUrl);
     const phone = resolveRecipientPhone(recipient, phoneOverrides);
     if (!phone) {
-      alert("연락처가 없어 발송할 수 없습니다.");
-      return;
+      if (!options?.quiet) alert("연락처가 없어 발송할 수 없습니다.");
+      return "fail" as const;
     }
     if (solapiConfigured === false) {
-      alert(
-        "솔라피 API가 설정되지 않았습니다.\n.env.local에 SOLAPI_API_KEY, SOLAPI_API_SECRET, SOLAPI_SENDER를 추가한 뒤 개발 서버를 재시작해 주세요."
-      );
-      return;
+      if (!options?.quiet) {
+        alert(
+          "솔라피 API가 설정되지 않았습니다.\n.env.local에 SOLAPI_API_KEY, SOLAPI_API_SECRET, SOLAPI_SENDER를 추가한 뒤 개발 서버를 재시작해 주세요."
+        );
+      }
+      return "fail" as const;
     }
-    setSendingId(recipient.id);
+    if (!options?.quiet) setSendingId(recipient.id);
     try {
       const result = await sendMessageViaApi({ to: phone, text: preview });
       await appendSmsSendLog(
@@ -687,17 +784,68 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
       }
 
       if (shouldMarkRecipientAsSent(result)) {
-        const next = new Set(sentIds);
-        next.add(recipient.id);
-        setSentIds(next);
+        setSentIds((prev) => {
+          const next = new Set(prev);
+          next.add(recipient.id);
+          return next;
+        });
         void addRecipientSentId(supabase, "survey", yearMonth, recipient.id);
       }
 
-      showFeedback(describeSmsSendResult(result));
+      if (!options?.quiet) showFeedback(describeSmsSendResult(result));
+      return "ok" as const;
     } catch (err) {
-      showFeedback(err instanceof Error ? err.message : "문자 발송에 실패했습니다.");
+      if (!options?.quiet) {
+        showFeedback(err instanceof Error ? err.message : "문자 발송에 실패했습니다.");
+      }
+      return "fail" as const;
+    } finally {
+      if (!options?.quiet) setSendingId(null);
+    }
+  };
+
+  const handleSendAll = async () => {
+    const targets = sortedDisplayRecipients.filter((r) => r.sendStatus === "pending");
+    if (targets.length === 0) {
+      alert("일괄 발송할 미발송 대상자가 없습니다.");
+      return;
+    }
+    if (solapiConfigured === false) {
+      alert(
+        "솔라피 API가 설정되지 않았습니다.\n.env.local에 SOLAPI_API_KEY, SOLAPI_API_SECRET, SOLAPI_SENDER를 추가한 뒤 개발 서버를 재시작해 주세요."
+      );
+      return;
+    }
+    const missingTemplate = targets.filter((r) => !resolveSendTemplateId(r.id));
+    if (missingTemplate.length > 0) {
+      alert(
+        `설문 템플릿이 지정되지 않은 담당자가 ${missingTemplate.length}명 있습니다. 템플릿을 선택한 뒤 다시 시도해 주세요.`
+      );
+      return;
+    }
+    const ok = confirm(
+      `미발송 ${targets.length}명에게 만족도 조사 문자를 일괄 발송할까요?\n(이미 발송 완료·연락처 없음은 제외됩니다.)`
+    );
+    if (!ok) return;
+
+    setSendingAll(true);
+    let success = 0;
+    let failed = 0;
+    try {
+      for (const r of targets) {
+        setSendingId(r.id);
+        const result = await handleSend(r, { quiet: true });
+        if (result === "ok") success++;
+        else failed++;
+      }
+      if (failed > 0) {
+        showFeedback(`일괄 발송 완료 · 성공 ${success}명, 실패 ${failed}명.`);
+      } else {
+        showFeedback(`일괄 발송 완료 · ${success}명에게 발송했습니다.`);
+      }
     } finally {
       setSendingId(null);
+      setSendingAll(false);
     }
   };
 
@@ -840,19 +988,35 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
                   </p>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => setLogModalOpen(true)}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-[#F8FAFC]"
-              >
-                <ClipboardList className="h-3.5 w-3.5" />
-                발송 기록
-                {countCampaignSmsLogs("survey", yearMonth) > 0 && (
-                  <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
-                    {countCampaignSmsLogs("survey", yearMonth)}
-                  </span>
-                )}
-              </button>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleSendAll()}
+                  disabled={
+                    sendingAll ||
+                    sendingId !== null ||
+                    stats.pending === 0 ||
+                    solapiConfigured === false
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-md bg-[var(--primary)] px-2.5 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  {sendingAll ? "일괄 발송 중…" : `일괄 발송${stats.pending > 0 ? ` (${stats.pending})` : ""}`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLogModalOpen(true)}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-[#F8FAFC]"
+                >
+                  <ClipboardList className="h-3.5 w-3.5" />
+                  발송 기록
+                  {countCampaignSmsLogs("survey", yearMonth) > 0 && (
+                    <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
+                      {countCampaignSmsLogs("survey", yearMonth)}
+                    </span>
+                  )}
+                </button>
+              </div>
             </div>
             <ul className="max-h-[32rem] divide-y divide-[var(--border)] overflow-y-auto">
               {filteredRecipients.length === 0 ? (
@@ -887,17 +1051,6 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
                         }
                       }}
                     >
-                      <div className="mt-0.5 shrink-0">
-                        {isSent ? (
-                          <CheckCircle2 className="h-5 w-5 text-emerald-600" aria-label="발송 완료" />
-                        ) : (
-                          <span
-                            className={`inline-block h-5 w-5 rounded-full border-2 ${
-                              active ? "border-[var(--primary)] bg-white" : "border-[var(--border)] bg-white"
-                            }`}
-                          />
-                        )}
-                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-semibold text-[var(--text)]">
@@ -959,6 +1112,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
                         type="button"
                         disabled={
                           r.sendStatus !== "pending" ||
+                          sendingAll ||
                           sendingId === r.id ||
                           pendingRecipientIds.has(r.id)
                         }
@@ -1126,7 +1280,11 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
                     <button
                       type="button"
                       onClick={() => void handleSurveyPreview()}
-                      disabled={!resolveSendTemplateId(selected.id)}
+                      disabled={
+                        applyingTemplate ||
+                        applyingTemplateAll ||
+                        !resolveSendTemplateId(selected.id)
+                      }
                       className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--text)] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
@@ -1135,16 +1293,35 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
                     <button
                       type="button"
                       onClick={() => void handleApplySurveyTemplate()}
-                      disabled={applyingTemplate || !resolveSendTemplateId(selected.id)}
+                      disabled={
+                        applyingTemplate ||
+                        applyingTemplateAll ||
+                        !resolveSendTemplateId(selected.id)
+                      }
                       className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {applyingTemplate ? "반영 중…" : "반영하기"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleApplySurveyTemplateToAll()}
+                      disabled={
+                        applyingTemplate ||
+                        applyingTemplateAll ||
+                        !resolveSendTemplateId(selected.id) ||
+                        sortedDisplayRecipients.length === 0
+                      }
+                      className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--primary)] bg-white px-3 py-2 text-xs font-semibold text-[var(--primary)] hover:bg-[#EFF6FF] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {applyingTemplateAll
+                        ? "전체 반영 중…"
+                        : `전체 반영 (${sortedDisplayRecipients.length})`}
                     </button>
                     <p className="w-full text-xs leading-relaxed text-[var(--text-muted)]">
                       선택한 템플릿으로 새 탭에서 확인합니다.
                       <br />
                       <span className="inline-block whitespace-nowrap">
-                        템플릿 변경·수정 후 반영하기를 누르면 설문 링크에도 바로 적용됩니다.
+                        반영하기는 현재 담당자, 전체 반영은 이 달 발송 대상 전원에게 적용됩니다.
                       </span>
                     </p>
                   </div>
