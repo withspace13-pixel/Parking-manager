@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Calculator, Home, Plus, Trash2 } from "lucide-react";
 import { MhpStoreCreditBadge } from "@/components/MhpStoreCreditBadge";
 import { MhpExtensionStatusBadge } from "@/components/MhpExtensionStatusBadge";
@@ -57,6 +57,12 @@ function getDateRange(start: string, end: string): string[] {
     dates.push(d.toISOString().slice(0, 10));
   }
   return dates;
+}
+
+/** 로컬 타임존 기준 오늘 (YYYY-MM-DD) — UTC toISOString 사용 금지 */
+function todayString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 type RowState = {
@@ -188,11 +194,20 @@ export default function ParkingPageClient() {
       setSelectedDate("");
       return;
     }
-    const today = new Date().toISOString().slice(0, 10);
-    const defaultDate = dateList.includes(today) ? today : dateList[0];
-    if (!selectedDate || !dateList.includes(selectedDate)) {
-      setSelectedDate(defaultDate);
+    const today = todayString();
+    // 초기 진입은 항상 로컬 오늘. 행사 첫날·사전세팅으로 떨어지지 않음.
+    if (!selectedDate) {
+      setSelectedDate(today);
+      return;
     }
+    // 사용자가 고른 날(목록에 있음) 또는 오늘(목록 밖이어도)은 유지
+    if (dateList.includes(selectedDate) || selectedDate === today) return;
+    setSelectedDate(today);
+  }, [dateList, selectedDate]);
+
+  const dateOptions = useMemo(() => {
+    if (!selectedDate || dateList.includes(selectedDate)) return dateList;
+    return [...dateList, selectedDate].sort();
   }, [dateList, selectedDate]);
 
   const applyFromRoomRows = useCallback(
@@ -981,7 +996,7 @@ export default function ParkingPageClient() {
                 onChange={(e) => setSelectedDate(e.target.value)}
                 className="input min-w-[148px] px-3 py-2.5 text-sm text-[var(--text)]"
               >
-                {dateList.map((d) => {
+                {dateOptions.map((d) => {
                   const room = projectRooms.find((r) => r.date === d);
                   const label = isPresetupRoomName(room?.room_name) ? `${d} (사전세팅)` : d;
                   return (
