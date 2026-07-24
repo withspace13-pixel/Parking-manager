@@ -8,6 +8,7 @@ import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
 import {
+  compareParkingRecordsByDateThenVehicle,
   computeSettlementTotals,
   freeCarsFootnoteLabel,
   freeCarsSummaryLabel,
@@ -276,15 +277,7 @@ export default function ReportPageClient() {
   );
 
   const sortedRecords = useMemo(
-    () =>
-      filteredRecords
-        .slice()
-        .sort((a, b) => {
-          const at = new Date(a.created_at ?? 0).getTime();
-          const bt = new Date(b.created_at ?? 0).getTime();
-          if (at !== bt) return at - bt;
-          return a.id.localeCompare(b.id);
-        }),
+    () => filteredRecords.slice().sort(compareParkingRecordsByDateThenVehicle),
     [filteredRecords]
   );
 
@@ -603,7 +596,7 @@ export default function ReportPageClient() {
             <div>
               <p className="text-sm font-semibold text-[var(--text)]">전체 발급 내역 (차량 · 일자별)</p>
               <p className="mt-1 text-xs text-[var(--text-muted)]">
-                총 {filteredRecords.length.toLocaleString()}건 · 위 정산 기간에 포함된 일자만 · 등록순으로 정렬된 상세 발급 내역입니다.
+                총 {filteredRecords.length.toLocaleString()}건 · 위 정산 기간에 포함된 일자만 · 일자/차량 순으로 정렬된 상세 발급 내역입니다.
               </p>
             </div>
           </div>

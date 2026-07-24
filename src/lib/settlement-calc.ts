@@ -39,6 +39,19 @@ export function settlementRecordDiscount(
   return recordDiscounts[recordId] ?? 0;
 }
 
+/** 발급 내역 표시용 — 사용 일자 → 차량번호 → id */
+export function compareParkingRecordsByDateThenVehicle(
+  a: Pick<ParkingRecord, "date" | "vehicle_num" | "id">,
+  b: Pick<ParkingRecord, "date" | "vehicle_num" | "id">
+): number {
+  const da = String(a.date).slice(0, 10);
+  const db = String(b.date).slice(0, 10);
+  if (da !== db) return da.localeCompare(db);
+  const vn = String(a.vehicle_num).localeCompare(String(b.vehicle_num), "ko", { numeric: true });
+  if (vn !== 0) return vn;
+  return a.id.localeCompare(b.id);
+}
+
 export function settlementRecordCharge(
   r: ParkingRecord,
   recordDiscounts: Record<string, number>

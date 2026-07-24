@@ -9,6 +9,7 @@ import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { datesYmdToConsecutiveRanges } from "@/lib/schedule-dates";
 import {
+  compareParkingRecordsByDateThenVehicle,
   computeSettlementTotals,
   freeCarsFootnoteLabel,
   freeCarsSummaryLabel,
@@ -265,15 +266,7 @@ export default function SettlementPageClient() {
   );
 
   const sortedRecords = useMemo(
-    () =>
-      filteredRecords
-        .slice()
-        .sort((a, b) => {
-          const at = new Date(a.created_at ?? 0).getTime();
-          const bt = new Date(b.created_at ?? 0).getTime();
-          if (at !== bt) return at - bt;
-          return a.id.localeCompare(b.id);
-        }),
+    () => filteredRecords.slice().sort(compareParkingRecordsByDateThenVehicle),
     [filteredRecords]
   );
 
