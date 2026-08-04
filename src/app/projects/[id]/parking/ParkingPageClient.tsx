@@ -6,6 +6,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { ArrowLeft, Calculator, Home, Plus, Trash2 } from "lucide-react";
 import { MhpStoreCreditBadge } from "@/components/MhpStoreCreditBadge";
 import { MhpExtensionStatusBadge } from "@/components/MhpExtensionStatusBadge";
+import { ParkingDurationCalculator } from "@/components/ParkingDurationCalculator";
 import { isDevMode } from "@/lib/dev-mode";
 import { useDevStore } from "@/lib/dev-store";
 import { supabase } from "@/lib/supabase";
@@ -63,6 +64,17 @@ function getDateRange(start: string, end: string): string[] {
 function todayString() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function formatShortDateWithWeekday(ymd: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
+  if (!match) return ymd;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const weekdays = ["일", "월", "화", "수", "목", "금", "토"] as const;
+  const weekday = weekdays[new Date(year, month - 1, day).getDay()];
+  return `${month}/${day}(${weekday})`;
 }
 
 type RowState = {
@@ -848,9 +860,9 @@ export default function ParkingPageClient() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--bg)]">
+    <div className="parking-page min-h-screen bg-[var(--bg)]">
       <header className="border-b border-[var(--border)] bg-white">
-        <div className="mx-auto max-w-7xl px-8 py-5">
+        <div className="mx-auto w-[74.75rem] max-w-full px-4 py-5 sm:px-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <button
@@ -881,349 +893,355 @@ export default function ParkingPageClient() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-8 py-10">
-        <div className="mb-8 flex flex-wrap items-start justify-between gap-6">
-          <div className="flex min-w-0 flex-1 flex-wrap items-start gap-6">
-            <div className="min-w-[260px] space-y-3 rounded-2xl border border-[#DCE8FF] bg-[#EFF4FF] px-6 py-5">
-              <p className="text-lg font-semibold text-[var(--text)]">
-                {project.org_name}{" "}
-                <span className="text-base">
-                  <ManagerNameWithPhone
-                    manager={project.manager}
-                    managerPhone={project.manager_phone}
-                    prefix="/ "
-                    phoneClassName="font-normal text-[var(--text-muted)]"
-                  />
-                </span>
-              </p>
-              <p className="text-base font-semibold text-[var(--text)]">
-                공간 : <span className="font-semibold text-[var(--text)]">{selectedRoomName}</span>
-              </p>
-              <p className="text-lg font-bold tracking-tight text-[var(--text)]">
-                {periodLabelLine || fallbackPeriodFromProject(project)}
-              </p>
-            </div>
-            <div className="flex min-w-[200px] flex-1 flex-col gap-4 sm:max-w-xl">
-              <div className="max-w-md space-y-1.5">
-                <div className="flex items-center gap-4">
-                  <span className="shrink-0 text-base font-semibold text-[var(--text)]">주차지원</span>
+      <main className="px-4 py-10 sm:px-5">
+        <div className="mx-auto flex w-fit max-w-full flex-col">
+            <div className="mb-8 flex w-[74.75rem] max-w-full flex-col gap-6 lg:flex-row lg:items-start">
+              <div className="flex min-w-0 w-[57rem] max-w-full flex-wrap items-start gap-6">
+                <div className="min-w-[260px] space-y-3 rounded-2xl border border-[#DCE8FF] bg-[#EFF4FF] px-6 py-5">
+                  <p className="text-lg font-semibold text-[var(--text)]">
+                    {project.org_name}{" "}
+                    <span className="text-base">
+                      <ManagerNameWithPhone
+                        manager={project.manager}
+                        managerPhone={project.manager_phone}
+                        prefix="/ "
+                        phoneClassName="font-normal text-[var(--text-muted)]"
+                      />
+                    </span>
+                  </p>
+                  <p className="text-base font-semibold text-[var(--text)]">
+                    공간 : <span className="font-semibold text-[var(--text)]">{selectedRoomName}</span>
+                  </p>
+                  <p className="text-lg font-bold tracking-tight text-[var(--text)]">
+                    {periodLabelLine || fallbackPeriodFromProject(project)}
+                  </p>
+                </div>
+                <div className="flex min-w-[200px] w-full flex-col gap-4 sm:flex-1">
+                  <div className="max-w-xl space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-4">
+                      <span className="shrink-0 text-base font-semibold text-[var(--text)]">주차지원</span>
+                      <button
+                        type="button"
+                        title="클릭하여 주차지원 여부 변경"
+                        aria-pressed={parseParkingSupport(project.parking_support as unknown) === "yes"}
+                        aria-label={(() => {
+                          const s = parseParkingSupport(project.parking_support as unknown);
+                          if (s === "yes") return "주차지원 함";
+                          if (s === "no") return "주차지원 안 함";
+                          if (s === "undecided") return "주차지원 미정";
+                          return "주차지원 확인 필요";
+                        })()}
+                        aria-describedby="parking-support-hint"
+                        disabled={togglingSupport}
+                        onClick={() => void handleToggleParkingSupport()}
+                        className={`inline-flex h-auto min-h-10 min-w-[3rem] max-w-[10rem] shrink-0 items-center justify-center rounded-full border px-3 py-2 text-sm font-bold leading-tight transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60 sm:text-base ${parkingSupportUiClass(parseParkingSupport(project.parking_support as unknown))}`}
+                      >
+                        {parkingSupportShortLabel(parseParkingSupport(project.parking_support as unknown))}
+                      </button>
+                      <p id="parking-support-hint" className="text-sm leading-snug text-[var(--text-muted)]">
+                        버튼을 눌러 주차지원 여부를 변경할 수 있습니다.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-white px-4 py-3">
+                    <label
+                      htmlFor="parking-remarks"
+                      className="shrink-0 text-base font-semibold leading-none text-[var(--text)]"
+                    >
+                      비고
+                    </label>
+                    <div className="min-w-0 flex-1 border-l border-[var(--border)] pl-4">
+                      {!remarksEditing ? (
+                        (() => {
+                          const trimmed = remarksInput.trim();
+                          if (!trimmed) return null;
+                          return (
+                            <p
+                              className="line-clamp-3 break-words whitespace-pre-line text-base leading-snug text-[var(--text)]"
+                              title={trimmed}
+                            >
+                              {trimmed}
+                            </p>
+                          );
+                        })()
+                      ) : (
+                        <textarea
+                          id="parking-remarks"
+                          value={remarksInput}
+                          onChange={(e) => setRemarksInput(e.target.value)}
+                          onBlur={() => void saveRemarks()}
+                          disabled={remarksSaving}
+                          rows={3}
+                          className="input min-h-[48px] w-full resize-none px-3 py-2.5 text-base text-[var(--text)] placeholder:text-[var(--text-muted)] disabled:opacity-60"
+                          placeholder="비고 없음"
+                          autoComplete="off"
+                        />
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={remarksSaving}
+                      onClick={() => {
+                        if (!project) return;
+                        if (remarksEditing) {
+                          void (async () => {
+                            await saveRemarks();
+                            setRemarksEditing(false);
+                          })();
+                        } else {
+                          setRemarksEditing(true);
+                        }
+                      }}
+                      className="btn inline-flex h-10 shrink-0 items-center gap-2 px-3 text-sm"
+                    >
+                      {remarksEditing ? "완료" : "수정"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="w-[17rem] shrink-0">
+                <div className="ml-auto flex w-[10.75rem] flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <label className="shrink-0 text-sm font-medium text-[var(--text)]">일자</label>
+                    <select
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      className="input min-w-0 flex-1 px-2.5 py-2 text-sm text-[var(--text)]"
+                    >
+                      {dateOptions.map((d) => {
+                        const room = projectRooms.find((r) => r.date === d);
+                        const shortDate = formatShortDateWithWeekday(d);
+                        const label = isPresetupRoomName(room?.room_name) ? `${shortDate} (사전세팅)` : shortDate;
+                        return (
+                          <option key={d} value={d}>
+                            {label}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                  <Link
+                    href={`/projects/${projectId}/settlement`}
+                    className="btn btn-primary inline-flex w-full items-center justify-center gap-1.5 px-3 py-2 text-sm"
+                  >
+                    <Calculator className="h-4 w-4" />
+                    정산 보기
+                  </Link>
                   <button
                     type="button"
-                    title="클릭하여 주차지원 여부 변경"
-                    aria-pressed={parseParkingSupport(project.parking_support as unknown) === "yes"}
-                    aria-label={(() => {
-                      const s = parseParkingSupport(project.parking_support as unknown);
-                      if (s === "yes") return "주차지원 함";
-                      if (s === "no") return "주차지원 안 함";
-                      if (s === "undecided") return "주차지원 미정";
-                      return "주차지원 확인 필요";
-                    })()}
-                    aria-describedby="parking-support-hint"
-                    disabled={togglingSupport}
-                    onClick={() => void handleToggleParkingSupport()}
-                    className={`inline-flex h-auto min-h-10 min-w-[3rem] max-w-[10rem] shrink-0 items-center justify-center rounded-full border px-3 py-2 text-sm font-bold leading-tight transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60 sm:text-base ${parkingSupportUiClass(parseParkingSupport(project.parking_support as unknown))}`}
+                    disabled={presetupSaving}
+                    onClick={() => void handlePresetupRegistration()}
+                    className="btn inline-flex w-full items-center justify-center px-3 py-2 text-sm disabled:cursor-wait disabled:opacity-60"
                   >
-                    {parkingSupportShortLabel(parseParkingSupport(project.parking_support as unknown))}
+                    {presetupSaving ? "추가 중…" : "사전세팅 차량 등록"}
                   </button>
                 </div>
-                <p id="parking-support-hint" className="text-sm leading-snug text-[var(--text-muted)]">
-                  버튼을 눌러 주차지원 여부를 변경할 수 있습니다.
-                </p>
               </div>
-              <div className="flex w-full min-w-0 items-center gap-3">
-                <label
-                  htmlFor="parking-remarks"
-                  className="shrink-0 text-base font-semibold leading-none text-[var(--text)]"
-                >
-                  비고
-                </label>
+            </div>
 
-                <div className="min-w-0 flex-1">
-                  {!remarksEditing ? (
-                    (() => {
-                      const trimmed = remarksInput.trim();
-                      if (!trimmed) return null;
-                      return (
-                        <p
-                          className="line-clamp-3 break-words whitespace-pre-line text-base leading-snug text-[var(--text)]"
-                          title={trimmed}
+            <div className="flex max-w-full flex-col gap-3 lg:flex-row lg:items-start">
+            <div className="w-fit max-w-full shrink-0">
+            <div className="card card-hover overflow-x-auto px-4 py-5 sm:px-5">
+              <table className="table-fixed text-left text-sm">
+                <colgroup>
+                  <col style={{ width: "4.5rem" }} />
+                  <col style={{ width: "4rem" }} />
+                  <col style={{ width: "11.5rem" }} />
+                  <col style={{ width: "6.5rem" }} />
+                  {TICKET_KEYS.map((k) => (
+                    <col key={k} style={{ width: "3rem" }} />
+                  ))}
+                  <col style={{ width: "4.5rem" }} />
+                  <col style={{ width: "4.5rem" }} />
+                  <col style={{ width: "7rem" }} />
+                </colgroup>
+                <thead>
+                  <tr className="text-[var(--text-muted)]">
+                    <th className="pb-3 pr-1.5 text-center font-medium text-[var(--text)]">차량</th>
+                    <th className="pb-3 pr-1.5 text-center font-medium text-[var(--text)]">조회</th>
+                    <th className="pb-3 pr-1.5 text-center font-medium text-[var(--text)]">입차 일시</th>
+                    <th className="pb-3 pr-1.5 text-center font-medium text-[var(--text)]">주차시간</th>
+                    {TICKET_KEYS.map((k) => (
+                      <th key={k} className="pb-3 pr-1.5 text-center text-xs font-medium text-[var(--text)]">
+                        {TICKET_LABELS[k]}
+                      </th>
+                    ))}
+                    <th className="pb-3 pr-1.5 text-center text-xs font-medium text-[var(--text)]">등록</th>
+                    <th className="pb-3 pr-1.5 text-center text-xs font-medium text-[var(--text)]">취소</th>
+                    <th className="pb-3 pr-0 font-medium text-[var(--text)]">
+                      <div className="flex items-center justify-center pr-6">
+                        <span>일자</span>
+                      </div>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, index) => (
+                    <Fragment key={index}>
+                    <tr className="table-row-hover transition-colors">
+                      <td className="py-2 pr-1.5 align-middle">
+                        <input
+                          ref={(el) => { vehicleRefs.current[index] = el; }}
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={4}
+                          value={row.vehicle_num}
+                          onChange={(e) => updateRow(index, "vehicle_num", e.target.value.replace(/\D/g, ""))}
+                          onBlur={() => saveVehicleRow(index)}
+                          onKeyDown={(e) => onVehicleKeyDown(e, index)}
+                          className="input block h-[38px] w-[4rem] px-1.5 py-2 text-center text-sm font-bold text-[var(--text)]"
+                          placeholder="0000"
+                        />
+                      </td>
+                      <td className="py-2 pr-1.5 align-middle">
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          disabled={mhpLoadingIndex !== null || mhpApplyLoadingIndex !== null}
+                          onClick={() => requestMhpLookup(index)}
+                          className="btn inline-flex w-full items-center justify-center px-2 py-1.5 text-xs disabled:cursor-wait disabled:opacity-60"
+                          title="MHP 콘솔에 번호 입력·자동 조회 후 입차 정보 반영(확장 필요)"
                         >
-                          {trimmed}
-                        </p>
-                      );
-                    })()
-                  ) : (
-                    <textarea
-                      id="parking-remarks"
-                      value={remarksInput}
-                      onChange={(e) => setRemarksInput(e.target.value)}
-                      onBlur={() => void saveRemarks()}
-                      disabled={remarksSaving}
-                      rows={3}
-                      className="input min-h-[48px] w-full resize-none px-3 py-2.5 text-base text-[var(--text)] placeholder:text-[var(--text-muted)] disabled:opacity-60"
-                      placeholder="비고 없음"
-                      autoComplete="off"
-                    />
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  disabled={remarksSaving}
-                  onClick={() => {
-                    if (!project) return;
-                    if (remarksEditing) {
-                      void (async () => {
-                        await saveRemarks();
-                        setRemarksEditing(false);
-                      })();
-                    } else {
-                      setRemarksEditing(true);
-                    }
-                  }}
-                  className="btn inline-flex h-10 shrink-0 items-center gap-2 px-3 text-sm"
-                >
-                  {remarksEditing ? "완료" : "수정"}
-                </button>
-              </div>
+                          {mhpLoadingIndex === index ? "…" : "조회"}
+                        </button>
+                      </td>
+                      <td className="py-2 pr-1.5 align-middle">
+                        <input
+                          type="text"
+                          readOnly
+                          tabIndex={-1}
+                          value={row.mhp_entry_at ?? ""}
+                          placeholder="조회 시"
+                          className="input w-full min-w-0 px-2.5 py-2 text-left text-sm text-[var(--text)] placeholder:text-[var(--text-muted)]"
+                        />
+                      </td>
+                      <td className="py-2 pr-1.5 align-middle">
+                        <input
+                          type="text"
+                          readOnly
+                          tabIndex={-1}
+                          value={row.mhp_parking_duration ?? ""}
+                          placeholder="조회 시"
+                          className="input w-full min-w-0 px-2 py-2 text-left text-sm text-[var(--text)] placeholder:text-[var(--text-muted)]"
+                        />
+                      </td>
+                      {TICKET_KEYS.map((key, colIndex) => (
+                        <td key={key} className="py-2 pr-1.5 align-middle">
+                          <input
+                            ref={(el) => {
+                              if (!ticketRefs.current[index]) ticketRefs.current[index] = [];
+                              ticketRefs.current[index][colIndex] = el;
+                            }}
+                            type="text"
+                            inputMode="numeric"
+                            value={row[key] === 0 ? "" : row[key]}
+                            onChange={(e) => updateRow(index, key, e.target.value.replace(/\D/g, ""))}
+                            onKeyDown={(e) => onTicketKeyDown(e, index, colIndex)}
+                            className="input-inset block w-full min-w-0 px-0.5 py-1.5 text-center text-sm text-[var(--text)]"
+                          />
+                        </td>
+                      ))}
+                      <td className="py-2 pr-2.5 text-center align-middle">
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          disabled={mhpApplyLoadingIndex !== null || mhpLoadingIndex !== null}
+                          onClick={() => requestMhpSync(index)}
+                          className="btn btn-primary inline-flex w-full items-center justify-center px-1.5 py-1.5 text-xs whitespace-nowrap shadow-sm disabled:cursor-wait disabled:opacity-60"
+                          title="앱 표 수량대로 MHP를 취소/추가하여 동기화(확장 필요)"
+                          aria-label="MHP 할인 동기화"
+                        >
+                          {mhpApplyLoadingIndex === index ? "…" : "등록"}
+                        </button>
+                      </td>
+                      <td className="py-2 pr-1.5 text-center align-middle">
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          disabled={mhpApplyLoadingIndex !== null || mhpLoadingIndex !== null}
+                          onClick={() => requestMhpCancelAll(index)}
+                          className="btn inline-flex w-full items-center justify-center px-1.5 py-1.5 text-xs whitespace-nowrap disabled:cursor-wait disabled:opacity-60"
+                          title="MHP에 등록된 미사용 할인 전체 취소(확장 필요)"
+                          aria-label="MHP 전체 취소"
+                        >
+                          취소
+                        </button>
+                      </td>
+                      <td className="py-2 pr-0 align-middle">
+                        <div className="relative flex min-h-9 items-center justify-center pr-6">
+                          <span className="whitespace-nowrap text-center text-sm tabular-nums text-[var(--text-muted)]">
+                            {formatShortDateWithWeekday(row.date || selectedDate)}
+                          </span>
+                          {(row.recordId || row.vehicle_num?.trim()) ? (
+                            <button
+                              type="button"
+                              tabIndex={-1}
+                              onClick={() => removeRow(index)}
+                              className="absolute right-0 shrink-0 rounded p-1 text-[var(--text-muted)] hover:bg-red-50 hover:text-red-600"
+                              title="삭제"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                    {row.mhp_applied_discounts_summary ? (
+                      <tr className="table-row-hover">
+                        <td
+                          colSpan={
+                            4 +
+                            TICKET_KEYS.length +
+                            3
+                          }
+                          className="border-t border-amber-200/80 bg-amber-50/90 px-3 py-2 text-xs leading-relaxed text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/35 dark:text-amber-100"
+                        >
+                          <span className="font-semibold">이미 주차권 등록된 내역이 있습니다.</span>{" "}
+                          <span className="opacity-90">{row.mhp_applied_discounts_summary}</span>
+                        </td>
+                      </tr>
+                    ) : null}
+                    {row.mhp_sync_warning ? (
+                      <tr className="table-row-hover">
+                        <td
+                          colSpan={
+                            4 +
+                            TICKET_KEYS.length +
+                            3
+                          }
+                          className="border-t border-red-200/80 bg-red-50/90 px-3 py-2 text-xs leading-relaxed text-red-900"
+                        >
+                          <span className="font-semibold">MHP 수량 확인 필요.</span>{" "}
+                          <span className="opacity-90">{row.mhp_sync_warning}</span>
+                        </td>
+                      </tr>
+                    ) : null}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
-          <div className="flex shrink-0 flex-col items-end gap-3">
-            <div className="flex flex-wrap items-center gap-4">
-              <label className="text-sm font-medium text-[var(--text)]">일자</label>
-              <select
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="input min-w-[148px] px-3 py-2.5 text-sm text-[var(--text)]"
-              >
-                {dateOptions.map((d) => {
-                  const room = projectRooms.find((r) => r.date === d);
-                  const label = isPresetupRoomName(room?.room_name) ? `${d} (사전세팅)` : d;
-                  return (
-                    <option key={d} value={d}>
-                      {label}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-            <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:min-w-[148px]">
-              <Link
-                href={`/projects/${projectId}/settlement`}
-                className="btn btn-primary inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm"
-              >
-                <Calculator className="h-4 w-4" />
-                정산 보기
-              </Link>
+            <div className="mt-2 flex items-center justify-between gap-4">
               <button
                 type="button"
-                disabled={presetupSaving}
-                onClick={() => void handlePresetupRegistration()}
-                className="btn inline-flex items-center justify-center px-4 py-2.5 text-sm disabled:cursor-wait disabled:opacity-60"
+                onClick={addRow}
+                className="btn inline-flex items-center gap-2 px-4 py-2 text-sm"
               >
-                {presetupSaving ? "추가 중…" : "사전세팅 차량 등록"}
+                <Plus className="h-4 w-4" />
+                행 추가
               </button>
+              <Link
+                href="/"
+                className="btn btn-primary inline-flex items-center gap-2 px-4 py-2 text-sm"
+              >
+                완료
+              </Link>
             </div>
-          </div>
-        </div>
-
-        <p className="mb-4 text-xs text-[var(--text-muted)]">
-          방향키로 상하좌우 이동. Tab은 다음칸으로 이동하며, Enter는 새 행을 만든 뒤 그 행으로 이동합니다.{" "}
-          <span className="font-medium text-[var(--text)]">조회</span>는 MHP에 4자리 조회,{" "}
-          <span className="font-medium text-[var(--text)]">등록</span>은 입력한 종류·수량만큼 MHP에서 순서대로 할인 적용합니다. 조회가 성공하면 첫 수량 칸으로 이동하고, 등록/취소가 끝나면 다음 차량 칸으로 이동합니다.
-        </p>
-
-        <div className="card card-hover overflow-x-auto p-8">
-          <table className="w-full table-fixed text-left text-sm">
-            <colgroup>
-              <col style={{ width: "5.25rem" }} />
-              <col style={{ width: "4.75rem" }} />
-              <col style={{ width: "12.25rem" }} />
-              <col style={{ width: "6.75rem" }} />
-              {TICKET_KEYS.map((k) => (
-                <col key={k} style={{ width: "2.85rem" }} />
-              ))}
-              <col style={{ width: "4.25rem" }} />
-              <col style={{ width: "4.25rem" }} />
-              <col style={{ width: "7.25rem" }} />
-              <col style={{ width: "2.35rem" }} />
-            </colgroup>
-            <thead>
-              <tr className="text-[var(--text-muted)]">
-                <th className="pb-3 font-medium text-[var(--text)]">차량</th>
-                <th className="pb-3 text-center font-medium text-[var(--text)]">조회</th>
-                <th className="pb-3 text-left font-medium text-[var(--text)]">입차 일시</th>
-                <th className="pb-3 font-medium text-[var(--text)]">주차시간</th>
-                {TICKET_KEYS.map((k) => (
-                  <th key={k} className="px-0.5 pb-3 text-center text-xs font-medium text-[var(--text)]">
-                    {TICKET_LABELS[k]}
-                  </th>
-                ))}
-                <th className="pb-3 text-center text-xs font-medium text-[var(--text)]">등록</th>
-                <th className="pb-3 text-center text-xs font-medium text-[var(--text)]">취소</th>
-                <th className="pb-3 pr-2 text-right font-medium text-[var(--text)]">일자</th>
-                <th className="pb-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, index) => (
-                <Fragment key={index}>
-                <tr className="table-row-hover transition-colors">
-                  <td className="py-2 pr-3 align-middle">
-                    <input
-                      ref={(el) => { vehicleRefs.current[index] = el; }}
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={4}
-                      value={row.vehicle_num}
-                      onChange={(e) => updateRow(index, "vehicle_num", e.target.value.replace(/\D/g, ""))}
-                      onBlur={() => saveVehicleRow(index)}
-                      onKeyDown={(e) => onVehicleKeyDown(e, index)}
-                      className="input w-full max-w-[5rem] px-2.5 py-2 text-center text-sm font-bold text-[var(--text)]"
-                      placeholder="0000"
-                    />
-                  </td>
-                  <td className="py-2 px-3 align-middle">
-                    <div className="flex justify-center">
-                      <button
-                        type="button"
-                        tabIndex={-1}
-                        disabled={mhpLoadingIndex !== null || mhpApplyLoadingIndex !== null}
-                        onClick={() => requestMhpLookup(index)}
-                        className="btn inline-flex min-w-[3.25rem] shrink-0 items-center justify-center px-2 py-1.5 text-xs disabled:cursor-wait disabled:opacity-60"
-                        title="MHP 콘솔에 번호 입력·자동 조회 후 입차 정보 반영(확장 필요)"
-                      >
-                        {mhpLoadingIndex === index ? "…" : "조회"}
-                      </button>
-                    </div>
-                  </td>
-                  <td className="py-2 pr-1 align-middle">
-                    <input
-                      type="text"
-                      readOnly
-                      tabIndex={-1}
-                      value={row.mhp_entry_at ?? ""}
-                      placeholder="조회 시"
-                      className="input w-full max-w-[12rem] px-2.5 py-2 text-left text-sm text-[var(--text)] placeholder:text-[var(--text-muted)]"
-                    />
-                  </td>
-                  <td className="py-2 pr-1 align-middle">
-                    <input
-                      type="text"
-                      readOnly
-                      tabIndex={-1}
-                      value={row.mhp_parking_duration ?? ""}
-                      placeholder="조회 시"
-                      className="input w-full max-w-[6.75rem] px-2.5 py-2 text-left text-sm text-[var(--text)] placeholder:text-[var(--text-muted)]"
-                    />
-                  </td>
-                  {TICKET_KEYS.map((key, colIndex) => (
-                    <td key={key} className="px-0.5 py-2 align-middle">
-                      <input
-                        ref={(el) => {
-                          if (!ticketRefs.current[index]) ticketRefs.current[index] = [];
-                          ticketRefs.current[index][colIndex] = el;
-                        }}
-                        type="text"
-                        inputMode="numeric"
-                        value={row[key] === 0 ? "" : row[key]}
-                        onChange={(e) => updateRow(index, key, e.target.value.replace(/\D/g, ""))}
-                        onKeyDown={(e) => onTicketKeyDown(e, index, colIndex)}
-                        className="input-inset w-full min-w-0 px-0.5 py-1.5 text-center text-sm text-[var(--text)]"
-                      />
-                    </td>
-                  ))}
-                  <td className="py-2 px-0.5 text-center align-middle">
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      disabled={mhpApplyLoadingIndex !== null || mhpLoadingIndex !== null}
-                      onClick={() => requestMhpSync(index)}
-                      className="btn btn-primary inline-flex w-full max-w-[3.75rem] items-center justify-center px-1.5 py-1.5 text-xs whitespace-nowrap shadow-sm disabled:cursor-wait disabled:opacity-60"
-                      title="앱 표 수량대로 MHP를 취소/추가하여 동기화(확장 필요)"
-                      aria-label="MHP 할인 동기화"
-                    >
-                      {mhpApplyLoadingIndex === index ? "…" : "등록"}
-                    </button>
-                  </td>
-                  <td className="py-2 px-0.5 text-center align-middle">
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      disabled={mhpApplyLoadingIndex !== null || mhpLoadingIndex !== null}
-                      onClick={() => requestMhpCancelAll(index)}
-                      className="btn inline-flex w-full max-w-[3.75rem] items-center justify-center px-1.5 py-1.5 text-xs whitespace-nowrap disabled:cursor-wait disabled:opacity-60"
-                      title="MHP에 등록된 미사용 할인 전체 취소(확장 필요)"
-                      aria-label="MHP 전체 취소"
-                    >
-                      취소
-                    </button>
-                  </td>
-                  <td className="py-2 pr-2 text-right text-sm text-[var(--text-muted)]">{row.date || selectedDate}</td>
-                  <td className="w-12 py-2 pl-1">
-                    {(row.recordId || row.vehicle_num?.trim()) && (
-                      <button
-                        type="button"
-                        tabIndex={-1}
-                        onClick={() => removeRow(index)}
-                        className="rounded p-1.5 text-[var(--text-muted)] hover:bg-red-50 hover:text-red-600"
-                        title="삭제"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-                {row.mhp_applied_discounts_summary ? (
-                  <tr className="table-row-hover">
-                    <td
-                      colSpan={
-                        4 +
-                        TICKET_KEYS.length +
-                        4
-                      }
-                      className="border-t border-amber-200/80 bg-amber-50/90 px-3 py-2 text-xs leading-relaxed text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/35 dark:text-amber-100"
-                    >
-                      <span className="font-semibold">이미 주차권 등록된 내역이 있습니다.</span>{" "}
-                      <span className="opacity-90">{row.mhp_applied_discounts_summary}</span>
-                    </td>
-                  </tr>
-                ) : null}
-                {row.mhp_sync_warning ? (
-                  <tr className="table-row-hover">
-                    <td
-                      colSpan={
-                        4 +
-                        TICKET_KEYS.length +
-                        4
-                      }
-                      className="border-t border-red-200/80 bg-red-50/90 px-3 py-2 text-xs leading-relaxed text-red-900"
-                    >
-                      <span className="font-semibold">MHP 수량 확인 필요.</span>{" "}
-                      <span className="opacity-90">{row.mhp_sync_warning}</span>
-                    </td>
-                  </tr>
-                ) : null}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="mt-4 flex items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={addRow}
-            className="btn inline-flex items-center gap-2 px-4 py-2 text-sm"
-          >
-            <Plus className="h-4 w-4" />
-            행 추가
-          </button>
-          <Link
-            href="/"
-            className="btn btn-primary inline-flex items-center gap-2 px-4 py-2 text-sm"
-          >
-            완료
-          </Link>
+            </div>
+            <aside className="w-full shrink-0 lg:w-[17rem]">
+              <ParkingDurationCalculator />
+            </aside>
+            </div>
         </div>
       </main>
     </div>

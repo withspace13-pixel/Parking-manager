@@ -128,6 +128,12 @@
     box-shadow: 0 12px 30px -26px rgba(30, 64, 175, 1);
   }
 
+  .parking-page .btn,
+  .parking-page .btn-primary,
+  .parking-page .btn-relief {
+    border-radius: 0.75rem;
+  }
+
   /* 릴리프 버튼 – 이름만 유지, 스타일은 동일한 플랫 버튼 */
   .btn-relief {
     @apply btn;
