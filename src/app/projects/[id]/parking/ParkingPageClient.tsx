@@ -38,6 +38,7 @@ import {
   postMhpLookupRequest,
   postMhpSyncRequest,
   splitMhpParkingDisplayText,
+  extractHhmmFromEntryAtDisplay,
 } from "@/lib/mhp-extension";
 import { formatMhpBridgeAlert } from "@/lib/mhp-bridge-errors";
 import { useMhpStoreCredit } from "@/lib/use-mhp-store-credit";
@@ -163,6 +164,7 @@ export default function ParkingPageClient() {
   const mhpApplyPendingRef = useRef<{ requestId: string; index: number; kind: "sync" | "cancel_all" } | null>(null);
   const [mhpLoadingIndex, setMhpLoadingIndex] = useState<number | null>(null);
   const [mhpApplyLoadingIndex, setMhpApplyLoadingIndex] = useState<number | null>(null);
+  const [calcLookup, setCalcLookup] = useState({ entryTime: "", nonce: 0 });
   const mhpStoreCredit = useMhpStoreCredit();
   const mhpExtensionStatus = useMhpExtensionStatus();
 
@@ -531,6 +533,10 @@ export default function ParkingPageClient() {
         });
         if (savedRow) saveRow(savedRow, rowIndex);
         focusFirstTicketInput(rowIndex);
+        setCalcLookup((prev) => ({
+          entryTime: extractHhmmFromEntryAtDisplay(entryAt),
+          nonce: prev.nonce + 1,
+        }));
         if (summary) alert(`이미 등록된 할인 내역이 있어요.\n${summary}\n\n원하시면 표 수량을 바꾼 뒤 “등록”을 누르면 MHP에 맞게 동기화됩니다.`);
       } else {
         setRows((prev) => {
@@ -548,6 +554,7 @@ export default function ParkingPageClient() {
               : r
           );
         });
+        setCalcLookup((prev) => ({ entryTime: "", nonce: prev.nonce + 1 }));
         alert(formatMhpBridgeAlert(e.data.error?.trim() || "MHP 조회에 실패했습니다."));
       }
     };
@@ -717,6 +724,7 @@ export default function ParkingPageClient() {
             : r
         )
       );
+      setCalcLookup((prev) => ({ entryTime: "", nonce: prev.nonce + 1 }));
       mhpPendingRef.current = { requestId, index, vehicleNum: v };
       setMhpLoadingIndex(index);
       postMhpLookupRequest(v, requestId);
@@ -1239,7 +1247,10 @@ export default function ParkingPageClient() {
             </div>
             </div>
             <aside className="w-full shrink-0 lg:w-[17rem]">
-              <ParkingDurationCalculator />
+              <ParkingDurationCalculator
+                lookupEntryTime={calcLookup.entryTime}
+                lookupNonce={calcLookup.nonce}
+              />
             </aside>
             </div>
         </div>

@@ -1,7 +1,7 @@
 "use client";
 
 // 주차권 등록 화면용 입·출차 시간 → 권종 추천 계산기
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Clock } from "lucide-react";
 import { recommendParkingTickets } from "@/lib/parking-duration-tickets";
 import {
@@ -10,17 +10,38 @@ import {
   type TimeSegment,
 } from "@/components/TimePickerInput";
 
-export function ParkingDurationCalculator() {
+type Props = {
+  /** 조회 성공 시 반영할 입차 HH:mm */
+  lookupEntryTime?: string;
+  /** 조회할 때마다 증가 — 출차 초기화 + 입차 교체 */
+  lookupNonce?: number;
+};
+
+export function ParkingDurationCalculator({
+  lookupEntryTime = "",
+  lookupNonce = 0,
+}: Props) {
   const [entryTime, setEntryTime] = useState("");
   const [exitTime, setExitTime] = useState("");
   const entryRef = useRef<TimePickerInputHandle>(null);
   const exitRef = useRef<TimePickerInputHandle>(null);
+  const lastNonceRef = useRef(lookupNonce);
+
+  useEffect(() => {
+    if (lookupNonce === 0) return;
+    if (lookupNonce === lastNonceRef.current) return;
+    lastNonceRef.current = lookupNonce;
+    setEntryTime(lookupEntryTime);
+    setExitTime("");
+    if (lookupEntryTime) {
+      window.setTimeout(() => exitRef.current?.focusSegment("hour"), 0);
+    }
+  }, [lookupNonce, lookupEntryTime]);
 
   const result = useMemo(() => {
     if (!entryTime || !exitTime) return null;
     return recommendParkingTickets(entryTime, exitTime);
   }, [entryTime, exitTime]);
-
 
   const focusExit = (segment: TimeSegment = "hour") => {
     exitRef.current?.focusSegment(segment);

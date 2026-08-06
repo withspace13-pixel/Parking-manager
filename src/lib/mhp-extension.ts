@@ -247,3 +247,13 @@ export function splitMhpParkingDisplayText(text: string): { entryAt: string; dur
   }
   return { entryAt, duration };
 }
+
+/** `2026.08.06 (목) 09:11` 형태 표시 문자열에서 입차 시각 HH:mm 추출 */
+export function extractHhmmFromEntryAtDisplay(entryAt: string): string {
+  const match = /(\d{1,2}):(\d{2})\s*$/.exec(String(entryAt ?? "").trim());
+  if (!match) return "";
+  const hour = Math.min(23, Math.max(0, Number(match[1])));
+  const minute = Math.min(59, Math.max(0, Number(match[2])));
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return "";
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
