@@ -249,6 +249,8 @@ export async function resolveSnapshotCampaignSettings(
 export type FreezeInviteSnapshotOptions = {
   /** 지정 시 해당 질문 템플릿으로 스냅샷 고정 (미지정 시 캠페인 현재 질문) */
   templateId?: string;
+  /** true면 클라이언트 force-dev와 무관하게 DB에 저장 (발송 API용) */
+  forceDatabase?: boolean;
 };
 
 /** 문자 발송 직전·미제출 초대에 설문 스냅샷 고정 */
@@ -273,7 +275,7 @@ export async function freezeInviteSnapshot(
     return preserveSnapshotQuestionIds(existingSnapshot, snapshot);
   };
 
-  if (isDevMode()) {
+  if (isDevMode() && !options?.forceDatabase) {
     const invite = devSurveyStore.getInviteByToken(token);
     if (!invite) throw new Error("유효하지 않은 설문 링크입니다.");
     if (invite.submittedAt) {

@@ -19,7 +19,7 @@ export function useSolapiBalance() {
 
   const refresh = useCallback(() => {
     setLoading(true);
-    void fetch("/api/messages/balance", { cache: "no-store" })
+    void fetch(`/api/messages/balance?t=${Date.now()}`, { cache: "no-store" })
       .then(async (res) => {
         const data = (await res.json().catch(() => ({}))) as {
           configured?: boolean;

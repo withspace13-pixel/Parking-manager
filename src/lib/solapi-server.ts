@@ -305,23 +305,12 @@ function resolveSolapiCash(res: {
       ? Number(res.balanceOnly)
       : null;
   const deposit =
-    res.deposit != null && !Number.isNaN(Number(res.deposit)) ? Number(res.deposit) : 0;
+    res.deposit != null && !Number.isNaN(Number(res.deposit)) ? Number(res.deposit) : null;
 
-  if (balanceOnly != null && balanceOnly > 0) {
-    return balanceOnly;
-  }
-
-  // balanceOnly가 0인 계정: 콘솔 「잔액」이 deposit(예치금)과 일치하는 경우가 있음
-  if (balanceOnly === 0 && deposit > 0 && deposit >= balance) {
-    return deposit;
-  }
-
-  if (balance > 0) {
-    return balance;
-  }
-
-  if (balanceOnly != null) {
-    return balanceOnly;
+  // 솔라피 콘솔 「잔액 합계」= 잔액(balanceOnly) + 예치금(deposit, 부가세 포함).
+  // balance는 예치금에서 부가세 10%를 뺀 값이라 콘솔보다 작게 보인다.
+  if (balanceOnly != null || deposit != null) {
+    return (balanceOnly ?? 0) + (deposit ?? 0);
   }
 
   return balance;

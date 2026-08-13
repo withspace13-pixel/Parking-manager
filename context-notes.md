@@ -47,6 +47,11 @@
 - **더미 번호 차단 없음**: `01000000000` 등도 솔라피에 보내고 실제 상태코드로 판단.
 - **env**: `SOLAPI_API_KEY`, `SOLAPI_API_SECRET`, `SOLAPI_SENDER` (등록 발신번호, 숫자만)
 
+## 잔액 배지 (2026-08-13)
+- 콘솔 「잔액 합계」는 `balanceOnly + deposit`(예치금은 부가세 포함).
+- API `balance`는 예치금 부가세 10% 제외. 예: deposit 11,125 → balance 10,012.5 → 반올림 10,013원.
+- 배지는 콘솔과 같은 `balanceOnly + deposit`을 표시한다.
+
 ## 미설정 시
 - `/api/messages/status` → `configured: false`, UI에 안내 문구
 - 발송 API → 503 + 설정 안내 메시지

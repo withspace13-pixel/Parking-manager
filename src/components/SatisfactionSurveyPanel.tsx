@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, ClipboardList, ExternalLink, PlusCircle, Sen
 import type { Project } from "@/lib/supabase";
 import { navigateToNewProject } from "@/lib/navigate";
 import { supabase } from "@/lib/supabase";
+import { isDevMode } from "@/lib/dev-mode";
 import {
   fetchManagerContacts,
   type ManagerContact,
@@ -58,28 +59,48 @@ import { SurveySendTemplatePicker } from "@/components/survey/SurveySendTemplate
 import {
   ensureSurveyInvitesForRecipients,
 } from "@/lib/survey/survey-invites";
+import { freezeInviteSnapshot } from "@/lib/survey/survey-form-snapshot";
 import {
   buildSurveyPreviewUrl,
   buildSurveyPublicUrl,
   extractSurveyInviteToken,
 } from "@/lib/survey/survey-url";
 
-async function freezeSurveyInviteTemplate(token: string, templateId: string) {
-  const res = await fetch(`/api/survey/${encodeURIComponent(token)}/freeze`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    cache: "no-store",
-    body: JSON.stringify({ templateId }),
-  });
-  const data = (await res.json()) as {
-    error?: string;
-    templateName?: string | null;
-    templateId?: string;
+async function freezeSurveyInviteTemplateLocally(token: string, templateId: string) {
+  const snapshot = await freezeInviteSnapshot(supabase, token, { templateId });
+  return {
+    templateId: snapshot.templateId ?? templateId,
+    templateName: snapshot.templateName ?? null,
   };
-  if (!res.ok) {
+}
+
+async function freezeSurveyInviteTemplate(token: string, templateId: string) {
+  try {
+    const res = await fetch(`/api/survey/${encodeURIComponent(token)}/freeze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ templateId }),
+    });
+    const data = (await res.json()) as {
+      error?: string;
+      templateName?: string | null;
+      templateId?: string;
+    };
+    if (res.ok) return data;
+    if (isDevMode()) return freezeSurveyInviteTemplateLocally(token, templateId);
     throw new Error(data.error || "설문 템플릿 반영에 실패했습니다.");
+  } catch (err) {
+    if (isDevMode()) {
+      try {
+        return await freezeSurveyInviteTemplateLocally(token, templateId);
+      } catch {
+        // keep original API error below
+      }
+    }
+    if (err instanceof Error) throw err;
+    throw new Error("설문 템플릿 반영에 실패했습니다.");
   }
-  return data;
 }
 
 type Props = {
@@ -716,51 +737,50 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
     if (recipient.sendStatus !== "pending") return "skip" as const;
     const org = orgOverrides[recipient.id] ?? recipient.displayOrgName;
     const manager = managerOverrides[recipient.id] ?? recipient.manager;
-    let surveyUrl = surveyUrls[recipient.id];
-    let inviteToken = "";
-    if (!surveyUrl) {
-      const map = await ensureSurveyInvitesForRecipients(supabase, yearMonth, [
-        {
-          id: recipient.id,
-          managerName: manager,
-          orgName: org,
-        },
-      ]);
-      const invite = map.get(recipient.id);
-      if (!invite) {
-        if (!options?.quiet) alert("설문 링크를 만들지 못했습니다.");
-        return "fail" as const;
+    if (!options?.quiet) setSendingId(recipient.id);
+    try {
+      let surveyUrl = surveyUrls[recipient.id];
+      let inviteToken = "";
+      if (!surveyUrl) {
+        const map = await ensureSurveyInvitesForRecipients(supabase, yearMonth, [
+          {
+            id: recipient.id,
+            managerName: manager,
+            orgName: org,
+          },
+        ]);
+        const invite = map.get(recipient.id);
+        if (!invite) {
+          throw new Error("설문 링크를 만들지 못했습니다.");
+        }
+        inviteToken = invite.token;
+        surveyUrl = buildSurveyPublicUrl(invite.token);
+        setSurveyUrls((prev) => ({ ...prev, [recipient.id]: surveyUrl }));
+      } else {
+        inviteToken = extractSurveyInviteToken(surveyUrl);
       }
-      inviteToken = invite.token;
-      surveyUrl = buildSurveyPublicUrl(invite.token);
-      setSurveyUrls((prev) => ({ ...prev, [recipient.id]: surveyUrl }));
-    } else {
-      inviteToken = extractSurveyInviteToken(surveyUrl);
-    }
-    if (inviteToken) {
-      const templateId = resolveSendTemplateId(recipient.id);
-      if (!templateId) {
-        if (!options?.quiet) alert("발송할 설문 템플릿을 선택해 주세요.");
-        return "fail" as const;
+      if (inviteToken) {
+        const templateId = resolveSendTemplateId(recipient.id);
+        if (!templateId) {
+          throw new Error("발송할 설문 템플릿을 선택해 주세요.");
+        }
+        try {
+          await freezeSurveyInviteTemplate(inviteToken, templateId);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "";
+          if (!msg.includes("이미 제출된")) throw err;
+        }
       }
-      await freezeSurveyInviteTemplate(inviteToken, templateId);
-    }
-    const preview = resolveBody(recipient, org, manager, surveyUrl);
-    const phone = resolveRecipientPhone(recipient, phoneOverrides);
-    if (!phone) {
-      if (!options?.quiet) alert("연락처가 없어 발송할 수 없습니다.");
-      return "fail" as const;
-    }
-    if (solapiConfigured === false) {
-      if (!options?.quiet) {
-        alert(
+      const preview = resolveBody(recipient, org, manager, surveyUrl);
+      const phone = resolveRecipientPhone(recipient, phoneOverrides);
+      if (!phone) {
+        throw new Error("연락처가 없어 발송할 수 없습니다.");
+      }
+      if (solapiConfigured === false) {
+        throw new Error(
           "솔라피 API가 설정되지 않았습니다.\n.env.local에 SOLAPI_API_KEY, SOLAPI_API_SECRET, SOLAPI_SENDER를 추가한 뒤 개발 서버를 재시작해 주세요."
         );
       }
-      return "fail" as const;
-    }
-    if (!options?.quiet) setSendingId(recipient.id);
-    try {
       const result = await sendMessageViaApi({ to: phone, text: preview });
       await appendSmsSendLog(
         supabase,
@@ -796,7 +816,7 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
       return "ok" as const;
     } catch (err) {
       if (!options?.quiet) {
-        showFeedback(err instanceof Error ? err.message : "문자 발송에 실패했습니다.");
+        alert(err instanceof Error ? err.message : "문자 발송에 실패했습니다.");
       }
       return "fail" as const;
     } finally {
@@ -838,7 +858,11 @@ export function SatisfactionSurveyPanel({ projects }: Props) {
         if (result === "ok") success++;
         else failed++;
       }
-      if (failed > 0) {
+      if (failed > 0 && success === 0) {
+        alert(
+          `일괄 발송에 실패했습니다. (${failed}명)\n설문 템플릿·연락처·솔라피 설정을 확인한 뒤 다시 시도해 주세요.`
+        );
+      } else if (failed > 0) {
         showFeedback(`일괄 발송 완료 · 성공 ${success}명, 실패 ${failed}명.`);
       } else {
         showFeedback(`일괄 발송 완료 · ${success}명에게 발송했습니다.`);

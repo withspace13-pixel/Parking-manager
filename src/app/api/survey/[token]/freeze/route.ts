@@ -34,7 +34,10 @@ export async function POST(
 
   try {
     const supabase = getSupabase();
-    const snapshot = await freezeInviteSnapshot(supabase, token, { templateId });
+    const snapshot = await freezeInviteSnapshot(supabase, token, {
+      templateId,
+      forceDatabase: true,
+    });
     return NextResponse.json(
       {
         ok: true,
